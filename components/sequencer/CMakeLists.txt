@@ -21,6 +21,10 @@ add_executable(sequencer-packets test/packets_test.cpp)
 target_link_libraries(sequencer-packets
   PRIVATE exchange-sequencer matcher-test-harness Catch2::Catch2WithMain)
 
+add_executable(sequencer-replication test/replication_test.cpp)
+target_link_libraries(sequencer-replication
+  PRIVATE exchange-sequencer matcher-test-harness Catch2::Catch2WithMain)
+
 add_executable(sequencer-sources test/sources_test.cpp)
 target_link_libraries(sequencer-sources
   PRIVATE exchange-sequencer matcher-test-harness Catch2::Catch2WithMain)
@@ -58,6 +62,7 @@ exchange_measured(sequencer-benchmark)
 catch_discover_tests(sequencer-stream)
 catch_discover_tests(sequencer-dedupe)
 catch_discover_tests(sequencer-packets)
+catch_discover_tests(sequencer-replication)
 catch_discover_tests(sequencer-sources)
 catch_discover_tests(sequencer-determinism)
 catch_discover_tests(sequencer-allocation)

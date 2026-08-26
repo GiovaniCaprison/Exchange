@@ -20,4 +20,16 @@ TEST_CASE("the sequencer never asks the allocator once the session is running") 
   CHECK(std::system((binary + " --journal " + journal.string()).c_str()) == 0);
   CHECK(std::system((binary + " --journal " + journal.string() + " --misbehave").c_str()) != 0);
   std::filesystem::remove(journal);
+  std::filesystem::remove(journal.string() + ".standby");
+}
+
+TEST_CASE("the replication pipeline never asks the allocator either") {
+  const std::filesystem::path journal = scratch("safe-probe.exj");
+  const std::string binary = SEQUENCER_ALLOCATION_PROBE_BINARY;
+  CHECK(std::system((binary + " --journal " + journal.string() + " --policy safe").c_str()) == 0);
+  CHECK(std::system(
+            (binary + " --journal " + journal.string() + " --policy safe --misbehave").c_str()) !=
+        0);
+  std::filesystem::remove(journal);
+  std::filesystem::remove(journal.string() + ".standby");
 }

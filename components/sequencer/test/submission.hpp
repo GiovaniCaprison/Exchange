@@ -13,9 +13,11 @@
 #include "exchange_protocol/CommandSequenced.h"
 #include "exchange_protocol/GatewaySubmission.h"
 #include "exchange_protocol/MessageHeader.h"
+#include "exchange_protocol/ReplicationAck.h"
 #include "harness.hpp"
 #include "journal.hpp"
 #include "sequencer.hpp"
+#include "standby.hpp"
 
 namespace exchange::sequencer::test {
 
@@ -73,6 +75,38 @@ inline std::vector<Ack> readAcks(std::vector<char> bytes) {
   return acks;
 }
 
+// The link's test side: every shipped range kept whole, so a suite can drop, reorder or delay
+// them on purpose.
+struct CapturingLink {
+  std::vector<char> current = std::vector<char>(common::ranges::PACKET_BYTES + 8);
+  std::size_t length = 0;
+  std::vector<std::vector<char>> ranges;
+  std::size_t claim(const std::size_t claimed) {
+    length = claimed;
+    return 0;
+  }
+  char* buffer() { return current.data(); }
+  void commit() {}
+  void publish() {
+    ranges.emplace_back(current.begin(), current.begin() + static_cast<long>(length));
+  }
+};
+
+inline std::vector<std::uint64_t> readReplicationAcks(std::vector<char> bytes) {
+  std::vector<std::uint64_t> upTo;
+  std::size_t at = 0;
+  while (at + REPLICATION_ACK_BYTES <= bytes.size()) {
+    sbe::MessageHeader wrap;
+    wrap.wrap(bytes.data(), at, 0, bytes.size());
+    sbe::ReplicationAck ack;
+    ack.wrapForDecode(bytes.data(), at + wrap.encodedLength(), wrap.blockLength(), wrap.version(),
+                      bytes.size());
+    upTo.push_back(ack.upToSequence());
+    at += REPLICATION_ACK_BYTES;
+  }
+  return upTo;
+}
+
 struct CapturingPacketSink {
   std::vector<std::vector<char>> packets;
   void send(const char* bytes, const std::size_t length) {
@@ -106,12 +140,16 @@ struct Wired {
   CapturingPacketSink packets;
   common::journal::Writer journal;
   ScriptedClock clock;
+  CapturingLink link;
   Sequencer<CapturingRing, CapturingRing, CapturingPacketSink, common::journal::Writer,
-            ScriptedClock>
+            ScriptedClock, CapturingLink>
       sequencer;
 
-  Wired(const std::string& journalPath, const std::uint32_t gateways)
-      : acks(gateways), journal(journalPath), sequencer(out, acks, packets, journal, clock) {}
+  Wired(const std::string& journalPath, const std::uint32_t gateways,
+        const Durability policy = Durability::LOCAL)
+      : acks(gateways),
+        journal(journalPath),
+        sequencer(out, acks, packets, journal, clock, link, policy) {}
 };
 
 }  // namespace exchange::sequencer::test
