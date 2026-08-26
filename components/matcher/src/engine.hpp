@@ -238,6 +238,29 @@ class Engine {
 
   // Views for the tests, allocating freely because tests own their time -------------------------
 
+  // The engine's state beyond its structures: prices the session has moved, the trading state,
+  // and the indicative deduplication pair. Geometry and per-instrument facts come from
+  // construction, and the pending queue is empty between commands, which is when snapshots happen.
+  void save(ByteSink& sink) const {
+    sink.i64(reference_);
+    sink.i64(lastExecuted_);
+    sink.i32(state_);
+    sink.i64(indicativePrice_);
+    sink.i64(indicativeQuantity_);
+    book_.save(sink);
+    triggers_.save(sink);
+  }
+
+  void restore(ByteSource& source) {
+    reference_ = source.i64();
+    lastExecuted_ = source.i64();
+    state_ = source.i32();
+    indicativePrice_ = source.i64();
+    indicativeQuantity_ = source.i64();
+    book_.restore(source);
+    triggers_.restore(source);
+  }
+
   const Book& book() const { return book_; }
   const Slab& slab() const { return slab_; }
   std::int32_t sessionState() const { return state_; }

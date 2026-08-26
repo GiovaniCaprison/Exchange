@@ -87,6 +87,16 @@ class Triggers {
 
   std::int32_t headSlot() const { return head_; }
 
+  void save(ByteSink& sink) const {
+    sink.i32(head_);
+    sink.i32(tail_);
+  }
+
+  void restore(ByteSource& source) {
+    head_ = source.i32();
+    tail_ = source.i32();
+  }
+
  private:
   Slab& slab_;
   std::int32_t head_ = 0;
