@@ -12,12 +12,15 @@ the citation each decision stands on, is in [ARCHITECTURE.md](docs/ARCHITECTURE.
 ## Layout
 
 ```
-docs/       the architecture, the principles, and the protocol
+docs/       the architecture, the principles, the protocol, and the component programme
 schema/     the SBE schema owning every message that crosses a process boundary
 components/ one directory per process
 corpus/     behavioural fixtures with their blessed events
 scripts/    measurement and analysis
 ```
+
+The programme in [docs/components/](docs/components/README.md) carries one page per component:
+its design, its proofs, how it lands, and where to learn the ground it stands on.
 
 The matcher is the venue's hot core: one thread on one pinned core, consuming sequenced commands
 from a ring, emitting events into another, allocating nothing after initialisation. Its design and
