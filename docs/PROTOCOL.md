@@ -225,7 +225,8 @@ free, and the determinism suite holds it to that.
 
 On-box transport is a single-producer single-consumer ring over a mapped file. Records are eight
 byte aligned: a u32 payload length, a u32 kind (0 a message, 1 padding), then the payload, which
-is one framed message. Padding records fill the tail of the buffer when a claim would wrap, so a
+is one framed message; on the submission carrier alone it is a framed GatewaySubmission followed
+by the framed command it prefixes, one record because they are one submission. Padding records fill the tail of the buffer when a claim would wrap, so a
 message is always contiguous. The producer claims space, encodes in place, and publishes a whole
 command's events with one release of its position, so a consumer sees a command's batch or
 nothing; a full ring is back pressure and the producer waits, because a dropped event is a stream
