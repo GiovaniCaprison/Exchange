@@ -7,6 +7,7 @@ Checks: >
   performance-*,
   portability-*,
   modernize-*,
+  -bugprone-command-processor,
   -bugprone-easily-swappable-parameters,
   -bugprone-empty-catch,
   -bugprone-exception-escape,
@@ -26,6 +27,9 @@ Checks: >
   -performance-enum-size,
   -portability-avoid-pragma-once
 
+# Command processor: the proof suites run their subject binaries by command line on purpose,
+# the shape the determinism and allocation proofs are built on; every command is assembled from
+# compile-time binary paths and scratch paths, and nothing outside a test calls system.
 # Swappable parameters: this venue's vocabulary is prices, quantities and sequences, which are
 # all the same integer type on purpose (the protocol's), so the check flags the hot path for
 # being a matching engine.
