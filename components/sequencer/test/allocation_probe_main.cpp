@@ -19,7 +19,9 @@
 #include "clock.hpp"
 #include "flow.hpp"
 #include "journal.hpp"
+#include "loopback.hpp"
 #include "sequencer.hpp"
+#include "standby.hpp"
 #include "submission.hpp"
 
 namespace {
@@ -78,6 +80,7 @@ int main(const int count, char** values) {
 
   std::string journalPath;
   bool misbehave = false;
+  bool safe = false;
   for (int at = 1; at < count; at++) {
     if (std::string("--journal") == values[at] && at + 1 < count) {
       journalPath = values[at + 1];
@@ -85,9 +88,14 @@ int main(const int count, char** values) {
     if (std::string("--misbehave") == values[at]) {
       misbehave = true;
     }
+    if (std::string("--policy") == values[at] && at + 1 < count) {
+      safe = std::string("safe") == values[at + 1];
+    }
   }
   if (journalPath.empty()) {
-    std::fprintf(stderr, "usage: sequencer-allocation-probe --journal J [--misbehave]\n");
+    std::fprintf(stderr,
+                 "usage: sequencer-allocation-probe --journal J [--policy local|safe]"
+                 " [--misbehave]\n");
     return 2;
   }
 
@@ -100,20 +108,34 @@ int main(const int count, char** values) {
   DiscardingPacketSink packets;
   common::journal::Writer journal(journalPath);
   sequencing::ScriptedClock clock;
+  sequencing::LoopbackLink link;
+  sequencing::LoopbackAcks loopbackAcks;
+  common::journal::Writer standbyJournal(journalPath + ".standby");
+  sequencing::Standby<sequencing::LoopbackAcks, common::journal::Writer> standby(standbyJournal,
+                                                                                 loopbackAcks);
   sequencing::Sequencer<DiscardingRing, DiscardingRing, DiscardingPacketSink,
-                        common::journal::Writer, sequencing::ScriptedClock>
-      sequencer(out, acks, packets, journal, clock);
+                        common::journal::Writer, sequencing::ScriptedClock,
+                        sequencing::LoopbackLink>
+      sequencer(out, acks, packets, journal, clock, link,
+                safe ? sequencing::Durability::SAFE : sequencing::Durability::LOCAL);
 
-  // Warm-up sequences a few hundred commands unlocked, spanning at least one packet flush.
+  // Warm-up sequences a few hundred commands unlocked, spanning at least one packet flush and,
+  // under the safe policy, the standby journal's first write.
   const std::size_t warm = 256;
   std::size_t at = 0;
   for (; at < warm && at < records.size(); at++) {
     sequencer.onSubmission(records[at].data(), records[at].size());
+    if (safe) {
+      sequencing::pumpLoopback(sequencer, link, standby, loopbackAcks);
+    }
   }
 
   locked = true;
   for (; at < records.size(); at++) {
     sequencer.onSubmission(records[at].data(), records[at].size());
+    if (safe) {
+      sequencing::pumpLoopback(sequencer, link, standby, loopbackAcks);
+    }
     if (misbehave) {
       // A direct call to the allocation function, which the compiler cannot elide the way it
       // may elide a new-expression whose result goes nowhere.

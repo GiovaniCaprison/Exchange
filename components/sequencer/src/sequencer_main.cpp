@@ -1,15 +1,22 @@
-// The sequencer process. Two ways in, one core: a live mode arbitrating gateway rings on the
-// wall clock, and an offline mode consuming a submission journal on the scripted clock, which is
-// how the determinism suite holds two runs to identical bytes and how a sequenced stream is
-// rebuilt for audit. The offline arbitration is the file's order, because a recorded arrival
+// The sequencer process. Three ways in, one core: a live mode arbitrating gateway rings on the
+// wall clock, an offline mode consuming a submission journal on the scripted clock, which is how
+// the determinism suite holds two runs to identical bytes and how a sequenced stream is rebuilt
+// for audit, and a standby mode consuming the replication link and holding everything any
+// consumer has seen. The offline arbitration is the file's order, because a recorded arrival
 // order is exactly what the file is.
 //
-//   sequencer --submissions FILE --journal J [--packets P] [--acks A] [--end-session]
+//   sequencer --submissions FILE --journal J [--packets P] [--acks A] [--policy local|safe]
+//             [--standby-journal SJ] [--end-session]
 //   sequencer --in R1,R2,... --acks A1,A2,... --out RING --journal J [--udp HOST:PORT]
+//             [--policy local|safe --replicate RING --replicate-acks RING]
+//   sequencer --standby-in RING --standby-acks RING --journal J
 //
 // In live mode the sequencer visits the gateway rings round robin, one record per visit, so no
 // gateway's burst starves another; a sweep that sequenced something flushes one packet, and a
-// quiet wire gets a heartbeat every hundred milliseconds. SIGINT or SIGTERM closes the session.
+// quiet wire gets a heartbeat every hundred milliseconds. Under the safe policy the primary
+// creates both replication rings and the standby attaches to them. Offline, the safe policy runs
+// an in-process standby over the loopback, one pump per submission. SIGINT or SIGTERM closes the
+// session.
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -20,6 +27,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,8 +35,10 @@
 #include "exchange_protocol/GatewaySubmission.h"
 #include "exchange_protocol/MessageHeader.h"
 #include "journal.hpp"
+#include "loopback.hpp"
 #include "sequencer.hpp"
 #include "spsc_ring.hpp"
+#include "standby.hpp"
 
 namespace {
 
@@ -182,8 +192,15 @@ std::uint32_t gatewayOf(char* record, const std::size_t length) {
   return submission.gatewayId();
 }
 
+std::uint64_t replicationAckOf(const char* message) {
+  std::uint64_t upToSequence = 0;
+  std::memcpy(&upToSequence, message + sbe::MessageHeader::encodedLength(), sizeof upToSequence);
+  return upToSequence;
+}
+
 int offline(const std::string& submissionsPath, const std::string& journalPath,
-            const std::string& packetsPath, const std::string& acksPath, const bool endSession) {
+            const std::string& packetsPath, const std::string& acksPath, const bool safe,
+            const std::string& standbyJournalPath, const bool endSession) {
   common::journal::Read submissions = common::journal::read(submissionsPath);
   std::uint32_t gateways = 1;
   for (std::size_t at = 0; at < submissions.count(); at++) {
@@ -197,36 +214,106 @@ int offline(const std::string& submissionsPath, const std::string& journalPath,
   FilePacketSink packets(packetsPath);
   common::journal::Writer journal(journalPath);
   sequencing::ScriptedClock clock;
+  sequencing::LoopbackLink link;
+  sequencing::LoopbackAcks loopbackAcks;
+  std::optional<common::journal::Writer> standbyJournal;
+  std::optional<sequencing::Standby<sequencing::LoopbackAcks, common::journal::Writer>> standby;
+  if (safe) {
+    standbyJournal.emplace(standbyJournalPath.empty() ? journalPath + ".standby"
+                                                      : standbyJournalPath);
+    standby.emplace(*standbyJournal, loopbackAcks);
+  }
   sequencing::Sequencer<DiscardingRing, CapturingRing, FilePacketSink, common::journal::Writer,
-                        sequencing::ScriptedClock>
-      sequencer(out, acks, packets, journal, clock);
+                        sequencing::ScriptedClock, sequencing::LoopbackLink>
+      sequencer(out, acks, packets, journal, clock, link,
+                safe ? sequencing::Durability::SAFE : sequencing::Durability::LOCAL);
 
   for (std::size_t at = 0; at < submissions.count(); at++) {
     sequencer.onSubmission(submissions.messages.data() + submissions.offsets[at],
                            submissions.lengths[at]);
+    if (standby) {
+      sequencing::pumpLoopback(sequencer, link, *standby, loopbackAcks);
+    }
   }
   if (endSession) {
     sequencer.endSession();
+    if (standby) {
+      sequencing::pumpLoopback(sequencer, link, *standby, loopbackAcks);
+    }
   } else {
     sequencer.flush();
   }
 
   if (!acksPath.empty()) {
-    std::FILE* out2 = std::fopen(acksPath.c_str(), "wb");
-    if (out2 == nullptr) {
+    std::FILE* ackFile = std::fopen(acksPath.c_str(), "wb");
+    if (ackFile == nullptr) {
       std::fprintf(stderr, "cannot write acks %s\n", acksPath.c_str());
       return 2;
     }
     for (const CapturingRing& ring : acks) {
-      std::fwrite(ring.captured().data(), 1, ring.captured().size(), out2);
+      std::fwrite(ring.captured().data(), 1, ring.captured().size(), ackFile);
     }
-    std::fclose(out2);
+    std::fclose(ackFile);
+  }
+  return 0;
+}
+
+template <typename Link>
+int liveLoop(std::vector<common::SpscRing>& ins, std::vector<common::SpscRing>& acks,
+             common::SpscRing& out, common::journal::Writer& journal, UdpSink& packets, Link& link,
+             const sequencing::Durability policy, common::SpscRing* replicationAcks) {
+  sequencing::WallClock clock;
+  sequencing::Sequencer<common::SpscRing, common::SpscRing, UdpSink, common::journal::Writer,
+                        sequencing::WallClock, Link>
+      sequencer(out, acks, packets, journal, clock, link, policy);
+
+  std::signal(SIGINT, onSignal);
+  std::signal(SIGTERM, onSignal);
+  std::uint64_t lastSend = clock.now();
+  std::uint64_t lastPublished = 0;
+  while (stopped == 0) {
+    std::size_t sequenced = 0;
+    for (common::SpscRing& in : ins) {
+      sequenced += in.pollOne(
+          [&](char* record, const std::size_t length) { sequencer.onSubmission(record, length); });
+    }
+    if (replicationAcks != nullptr) {
+      replicationAcks->poll([&](char* message, const std::size_t) {
+        sequencer.onReplicationAck(replicationAckOf(message));
+      });
+    }
+    if (sequenced > 0 || sequencer.published() > lastPublished) {
+      sequencer.flush();
+      lastPublished = sequencer.published();
+      lastSend = clock.now();
+      continue;
+    }
+    if (clock.now() - lastSend > 100'000'000ULL) {
+      sequencer.heartbeat();
+      lastSend = clock.now();
+    }
+  }
+  // A dying primary drains what the standby already covers, and closes only a drained session;
+  // an unclosed one is what takeover exists for.
+  if (replicationAcks != nullptr) {
+    for (int spins = 0; spins < 1'000'000 && sequencer.pending() > 0; spins++) {
+      replicationAcks->poll([&](char* message, const std::size_t) {
+        sequencer.onReplicationAck(replicationAckOf(message));
+      });
+    }
+  }
+  if (sequencer.pending() == 0) {
+    sequencer.endSession();
+  } else {
+    std::fprintf(stderr, "leaving %llu commands unpublished; the standby holds them\n",
+                 static_cast<unsigned long long>(sequencer.pending()));
   }
   return 0;
 }
 
 int live(const std::string& inList, const std::string& ackList, const std::string& outPath,
-         const std::string& journalPath, const std::string& udp) {
+         const std::string& journalPath, const std::string& udp, const bool safe,
+         const std::string& replicatePath, const std::string& replicateAcksPath) {
   const std::vector<std::string> inPaths = split(inList);
   const std::vector<std::string> ackPaths = split(ackList);
   if (inPaths.size() != ackPaths.size()) {
@@ -251,31 +338,32 @@ int live(const std::string& inList, const std::string& ackList, const std::strin
                       ? 0
                       : static_cast<std::uint16_t>(std::stoi(udp.substr(colon + 1))));
   common::journal::Writer journal(journalPath);
-  sequencing::WallClock clock;
-  sequencing::Sequencer<common::SpscRing, common::SpscRing, UdpSink, common::journal::Writer,
-                        sequencing::WallClock>
-      sequencer(out, acks, packets, journal, clock);
 
+  if (safe) {
+    if (replicatePath.empty() || replicateAcksPath.empty()) {
+      std::fprintf(stderr, "the safe policy needs --replicate and --replicate-acks rings\n");
+      return 2;
+    }
+    common::SpscRing link = common::SpscRing::create(replicatePath, 1 << 24);
+    common::SpscRing replicationAcks = common::SpscRing::create(replicateAcksPath, 1 << 20);
+    return liveLoop(ins, acks, out, journal, packets, link, sequencing::Durability::SAFE,
+                    &replicationAcks);
+  }
+  sequencing::NullLink link;
+  return liveLoop(ins, acks, out, journal, packets, link, sequencing::Durability::LOCAL, nullptr);
+}
+
+int standbyMode(const std::string& inPath, const std::string& acksPath,
+                const std::string& journalPath) {
+  common::SpscRing in = common::SpscRing::attach(inPath);
+  common::SpscRing acks = common::SpscRing::attach(acksPath);
+  common::journal::Writer journal(journalPath);
+  sequencing::Standby<common::SpscRing, common::journal::Writer> standby(journal, acks);
   std::signal(SIGINT, onSignal);
   std::signal(SIGTERM, onSignal);
-  std::uint64_t lastSend = clock.now();
-  while (stopped == 0) {
-    std::size_t sequenced = 0;
-    for (common::SpscRing& in : ins) {
-      sequenced += in.pollOne(
-          [&](char* record, const std::size_t length) { sequencer.onSubmission(record, length); });
-    }
-    if (sequenced > 0) {
-      sequencer.flush();
-      lastSend = clock.now();
-      continue;
-    }
-    if (clock.now() - lastSend > 100'000'000ULL) {
-      sequencer.heartbeat();
-      lastSend = clock.now();
-    }
+  while (stopped == 0 && !standby.ended()) {
+    in.poll([&](char* range, const std::size_t length) { standby.onRange(range, length); });
   }
-  sequencer.endSession();
   return 0;
 }
 
@@ -289,18 +377,33 @@ int main(const int count, char** values) {
   const std::string inList = argument(count, values, "--in");
   const std::string outPath = argument(count, values, "--out");
   const std::string udp = argument(count, values, "--udp");
+  const std::string policy = argument(count, values, "--policy");
+  const std::string standbyIn = argument(count, values, "--standby-in");
+  const std::string standbyAcks = argument(count, values, "--standby-acks");
+  const bool safe = policy == "safe";
+  if (!policy.empty() && policy != "safe" && policy != "local") {
+    std::fprintf(stderr, "policy must be local or safe\n");
+    return 2;
+  }
 
+  if (!standbyIn.empty() && !standbyAcks.empty() && !journalPath.empty()) {
+    return standbyMode(standbyIn, standbyAcks, journalPath);
+  }
   if (!submissions.empty() && !journalPath.empty()) {
-    return offline(submissions, journalPath, packets, acksPath,
+    return offline(submissions, journalPath, packets, acksPath, safe,
+                   argument(count, values, "--standby-journal"),
                    flagged(count, values, "--end-session"));
   }
   if (!inList.empty() && !acksPath.empty() && !outPath.empty() && !journalPath.empty()) {
-    return live(inList, acksPath, outPath, journalPath, udp);
+    return live(inList, acksPath, outPath, journalPath, udp, safe,
+                argument(count, values, "--replicate"),
+                argument(count, values, "--replicate-acks"));
   }
   std::fprintf(stderr,
                "usage: sequencer --submissions FILE --journal J [--packets P] [--acks A]"
-               " [--end-session]\n"
+               " [--policy local|safe] [--standby-journal SJ] [--end-session]\n"
                "       sequencer --in R1,R2 --acks A1,A2 --out RING --journal J"
-               " [--udp HOST:PORT]\n");
+               " [--udp HOST:PORT] [--policy safe --replicate RING --replicate-acks RING]\n"
+               "       sequencer --standby-in RING --standby-acks RING --journal J\n");
   return 2;
 }

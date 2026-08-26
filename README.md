@@ -30,7 +30,10 @@ The sequencer is where the order is made: one thread arbitrating gateway submiss
 command its place in the sequence and the venue's one timestamp, journaling it, and publishing it
 to the ring and as ranges with heartbeats and rewind. Every downstream process reads the stream
 through the consumer library in `components/common/`, from the ring, the journal or the packet
-feed, behind one gap-free contract. Its design and its proofs live in `components/sequencer/`.
+feed, behind one gap-free contract. Under the safe durability policy a standby consumes the
+replication link and must cover a command before the world hears it, so published is a subset of
+replicated and failover transfers nothing. Its design and its proofs live in
+`components/sequencer/`.
 
 ## Build
 

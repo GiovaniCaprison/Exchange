@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,7 +28,9 @@
 #include "exchange_protocol/GatewaySubmission.h"
 #include "exchange_protocol/MessageHeader.h"
 #include "journal.hpp"
+#include "loopback.hpp"
 #include "sequencer.hpp"
+#include "standby.hpp"
 
 #ifndef EXCHANGE_BUILD_FLAGS
 #define EXCHANGE_BUILD_FLAGS "unrecorded"
@@ -107,21 +110,37 @@ std::uint64_t quantile(const std::vector<std::uint64_t>& sorted, const double q)
   return sorted[at];
 }
 
+// Every policy runs the same machinery over the loopback so the numbers compare; safe adds the
+// standby, its journal and the pump to the per-submission clock, which is the pipeline's whole
+// cost short of a wire.
 template <typename Journal>
 std::vector<std::uint64_t> timed(common::journal::Read& submissions, Journal& journal,
-                                 const std::uint32_t gateways) {
+                                 const std::uint32_t gateways, const bool safe,
+                                 const std::string& standbyJournalPath) {
   DiscardingRing out;
   std::vector<DiscardingRing> acks(gateways);
   DiscardingPacketSink packets;
   sequencing::ScriptedClock clock;
+  sequencing::LoopbackLink link;
+  sequencing::LoopbackAcks loopbackAcks;
+  std::optional<common::journal::Writer> standbyJournal;
+  std::optional<sequencing::Standby<sequencing::LoopbackAcks, common::journal::Writer>> standby;
+  if (safe) {
+    standbyJournal.emplace(standbyJournalPath);
+    standby.emplace(*standbyJournal, loopbackAcks);
+  }
   sequencing::Sequencer<DiscardingRing, DiscardingRing, DiscardingPacketSink, Journal,
-                        sequencing::ScriptedClock>
-      sequencer(out, acks, packets, journal, clock);
+                        sequencing::ScriptedClock, sequencing::LoopbackLink>
+      sequencer(out, acks, packets, journal, clock, link,
+                safe ? sequencing::Durability::SAFE : sequencing::Durability::LOCAL);
   std::vector<std::uint64_t> timings(submissions.count(), 0);
   for (std::size_t at = 0; at < submissions.count(); at++) {
     const std::uint64_t before = now();
     sequencer.onSubmission(submissions.messages.data() + submissions.offsets[at],
                            submissions.lengths[at]);
+    if (standby) {
+      sequencing::pumpLoopback(sequencer, link, *standby, loopbackAcks);
+    }
     timings[at] = now() - before;
   }
   sequencer.flush();
@@ -137,10 +156,11 @@ int main(const int count, char** values) {
   const std::string label = argument(count, values, "--label", "run-" + policy);
   const std::uint64_t warmup = std::stoull(argument(count, values, "--warmup", "10000"));
   const long core = std::stol(argument(count, values, "--core", "-1"));
-  if (submissionsPath.empty() || resultsPath.empty() || (policy != "local" && policy != "none")) {
+  if (submissionsPath.empty() || resultsPath.empty() ||
+      (policy != "local" && policy != "none" && policy != "safe")) {
     std::fprintf(stderr,
                  "usage: sequencer-benchmark --submissions S --results DIR"
-                 " [--policy local|none] [--warmup N] [--core N] [--label L]\n");
+                 " [--policy local|none|safe] [--warmup N] [--core N] [--label L]\n");
     return 2;
   }
 
@@ -167,12 +187,13 @@ int main(const int count, char** values) {
   std::filesystem::create_directories(resultsPath);
   const std::filesystem::path directory(resultsPath);
   std::vector<std::uint64_t> timings;
-  if (policy == "local") {
-    common::journal::Writer journal((directory / (label + "-journal.exj")).string());
-    timings = timed(submissions, journal, gateways);
-  } else {
+  const std::string standbyPath = (directory / (label + "-standby.exj")).string();
+  if (policy == "none") {
     NullJournal journal;
-    timings = timed(submissions, journal, gateways);
+    timings = timed(submissions, journal, gateways, false, standbyPath);
+  } else {
+    common::journal::Writer journal((directory / (label + "-journal.exj")).string());
+    timings = timed(submissions, journal, gateways, policy == "safe", standbyPath);
   }
 
   std::vector<std::uint64_t> measured(timings.begin() + static_cast<long>(warmup), timings.end());

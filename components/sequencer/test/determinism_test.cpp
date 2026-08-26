@@ -37,18 +37,24 @@ TEST_CASE("the binary sequences the same submissions to identical bytes, and the
   REQUIRE(run(std::string(FLOWGEN_BINARY) + " --journal " + handStamped.string() + " --commands " +
               commands + " --seed " + seed) == 0);
 
-  const auto sequence = [&](const std::string& tag) {
+  const auto sequence = [&](const std::string& tag, const std::string& policy) {
     const std::filesystem::path journal = scratch(tag + ".exj");
     const std::filesystem::path packets = scratch(tag + ".pkt");
     const std::filesystem::path acks = scratch(tag + ".ack");
+    const std::filesystem::path standby = scratch(tag + ".standby.exj");
     REQUIRE(run(std::string(SEQUENCER_BINARY) + " --submissions " + submissions.string() +
                 " --journal " + journal.string() + " --packets " + packets.string() + " --acks " +
-                acks.string() + " --end-session") == 0);
-    return std::vector<std::filesystem::path>{journal, packets, acks};
+                acks.string() + " --policy " + policy + " --standby-journal " + standby.string() +
+                " --end-session") == 0);
+    std::vector<std::filesystem::path> artifacts{journal, packets, acks};
+    if (policy == "safe") {
+      artifacts.push_back(standby);
+    }
+    return artifacts;
   };
 
-  const std::vector<std::filesystem::path> first = sequence("one");
-  const std::vector<std::filesystem::path> second = sequence("two");
+  const std::vector<std::filesystem::path> first = sequence("one", "local");
+  const std::vector<std::filesystem::path> second = sequence("two", "local");
 
   // Twice through the sequencer diffs to nothing, on every artifact it writes.
   for (std::size_t at = 0; at < first.size(); at++) {
@@ -59,6 +65,22 @@ TEST_CASE("the binary sequences the same submissions to identical bytes, and the
 
   // The sequencer's journal is the hand-stamped stream, byte for byte.
   CHECK(fileBytes(first[0].string()) == fileBytes(handStamped.string()));
+
+  // The safe policy sequences the same bytes, twice, and its standby holds the same journal:
+  // the durability policy changes when the world hears a command, and nothing about what it is.
+  const std::vector<std::filesystem::path> safeOne = sequence("safe-one", "safe");
+  const std::vector<std::filesystem::path> safeTwo = sequence("safe-two", "safe");
+  for (std::size_t at = 0; at < safeOne.size(); at++) {
+    CHECK(fileBytes(safeOne[at].string()) == fileBytes(safeTwo[at].string()));
+  }
+  CHECK(fileBytes(safeOne[0].string()) == fileBytes(handStamped.string()));
+  CHECK(fileBytes(safeOne[3].string()) == fileBytes(safeOne[0].string()));
+  for (const std::filesystem::path& path : safeOne) {
+    std::filesystem::remove(path);
+  }
+  for (const std::filesystem::path& path : safeTwo) {
+    std::filesystem::remove(path);
+  }
 
   // And the matcher, replaying both journals, emits identical events: the pipeline agrees.
   const std::filesystem::path eventsSequenced = scratch("sequenced.events");

@@ -42,9 +42,10 @@ TEST_CASE("the ring, the journal and the packet feed deliver identical bytes") {
     CapturingPacketSink sink;
     common::journal::Writer journal(journalPath.string());
     ScriptedClock clock;
+    NullLink link;
     Sequencer<common::SpscRing, CapturingRing, CapturingPacketSink, common::journal::Writer,
-              ScriptedClock>
-        sequencer(out, acks, sink, journal, clock);
+              ScriptedClock, NullLink>
+        sequencer(out, acks, sink, journal, clock, link);
     std::vector<std::vector<char>> records = dealtSubmissions(flow, 2);
     for (std::vector<char>& record : records) {
       sequencer.onSubmission(record.data(), record.size());

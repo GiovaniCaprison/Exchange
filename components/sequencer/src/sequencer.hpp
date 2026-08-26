@@ -6,15 +6,19 @@
 // that never saw its acknowledgment resubmits under the same gatewaySequence, and the window of
 // past acknowledgments answers the retry with the place the command already holds.
 //
-// The order of operations per fresh command is the durability contract: stamp, journal, then
-// acknowledge and publish, so an acknowledged command survives this process's death under the
-// local policy. The replication link tightens the same order to the safe policy later in the
-// component's arc (docs/components/sequencer.md).
+// Durability is the order of operations per fresh command, and the policy names who must hold a
+// command before the world may know it. Under the local policy the journal write gates
+// publication and acknowledgment; under the safe policy the standby's replication acknowledgment
+// does, so published is a subset of replicated by construction and the standby always holds
+// everything any consumer has seen. The pipeline never stalls per command: sequencing and
+// shipping continue while acknowledgments stream back, and everything the watermark covers is
+// published in order, which is what pipelined replication with grouped acknowledgments means.
 
 #pragma once
 
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <vector>
 
 #include "exchange_protocol/CommandSequenced.h"
@@ -31,7 +35,19 @@ inline constexpr std::size_t SUBMISSION_BYTES =
 inline constexpr std::size_t ACK_BYTES =
     sbe::MessageHeader::encodedLength() + sbe::CommandSequenced::sbeBlockLength();
 
-template <typename OutRing, typename AckRing, typename PacketSink, typename Journal, typename Clock>
+enum class Durability { LOCAL, SAFE };
+
+// A replication link that goes nowhere, for deployments and proofs that run without a standby.
+struct NullLink {
+  std::size_t claim(std::size_t) { return 0; }
+  char* buffer() { return space_; }
+  void commit() {}
+  void publish() {}
+  char space_[common::ranges::PACKET_BYTES + 8] = {};
+};
+
+template <typename OutRing, typename AckRing, typename PacketSink, typename Journal, typename Clock,
+          typename Link>
 class Sequencer {
  public:
   // Past acknowledgments a gateway can still be re-answered from. A retry older than the window
@@ -39,13 +55,21 @@ class Sequencer {
   // which is failover's problem rather than dedupe's.
   static constexpr std::uint64_t WINDOW = 1024;
 
+  // Commands sequenced and shipped but not yet covered by the standby's acknowledgment. The
+  // capacity is an engineering bound sized far past any healthy link's flight; hitting it means
+  // the standby died mid-session, which the lease machinery owns rather than this queue.
+  static constexpr std::uint64_t PIPELINE = 1 << 15;
+
   Sequencer(OutRing& out, std::vector<AckRing>& acks, PacketSink& packets, Journal& journal,
-            Clock& clock, const std::uint32_t epoch = 1)
+            Clock& clock, Link& link, const Durability policy = Durability::LOCAL,
+            const std::uint32_t epoch = 1)
       : out_(out),
         acks_(acks),
         packets_(packets),
         journal_(journal),
         clock_(clock),
+        link_(link),
+        policy_(policy),
         epoch_(epoch),
         builder_(packet_, sizeof packet_) {
     gateways_.resize(acks.size());
@@ -54,6 +78,8 @@ class Sequencer {
       gateway.sequence.assign(WINDOW, 0);
       gateway.timestamp.assign(WINDOW, 0);
     }
+    pending_.resize(PIPELINE);
+    arena_.resize(std::size_t{1} << 23);
   }
 
   // One submission-plane record: a framed GatewaySubmission and the framed command it prefixes.
@@ -87,20 +113,28 @@ class Sequencer {
       std::memcpy(command + context, &sequence_, sizeof sequence_);
       std::memcpy(command + context + sizeof sequence_, &timestamp, sizeof timestamp);
       journal_.append(command, static_cast<std::uint32_t>(commandLength));
-      publish(command, commandLength);
+      ship(sequence_, command, commandLength);
       const std::uint64_t slot = gatewaySequence & (WINDOW - 1);
       gateway.key[slot] = gatewaySequence;
       gateway.sequence[slot] = sequence_;
       gateway.timestamp[slot] = timestamp;
       gateway.nextExpected++;
-      acknowledge(gatewayId, gatewaySequence, sequence_, timestamp);
+      if (policy_ == Durability::LOCAL) {
+        acked_ = sequence_;
+        publishAt(sequence_, command, commandLength);
+        acknowledge(gatewayId, gatewaySequence, sequence_, timestamp);
+      } else {
+        enqueue(sequence_, gatewayId, gatewaySequence, timestamp, command, commandLength);
+      }
       return;
     }
     if (gatewaySequence < gateway.nextExpected) {
       // A resubmission: the earlier answer stands and is repeated, because sequencing it again
-      // would hand one command two places in the order.
+      // would hand one command two places in the order. An answer is owed only once it is
+      // durable: a retry of a command still in the pipeline stays unanswered, and the gateway's
+      // next retry finds it covered, which is retry plus dedupe carrying the wait too.
       const std::uint64_t slot = gatewaySequence & (WINDOW - 1);
-      if (gateway.key[slot] == gatewaySequence) {
+      if (gateway.key[slot] == gatewaySequence && gateway.sequence[slot] <= acked_) {
         duplicates_++;
         acknowledge(gatewayId, gatewaySequence, gateway.sequence[slot], gateway.timestamp[slot]);
       } else {
@@ -112,6 +146,24 @@ class Sequencer {
     dropped_++;
   }
 
+  // The standby holds everything up to here: publish and acknowledge, in order, all of it.
+  void onReplicationAck(const std::uint64_t upToSequence) {
+    if (upToSequence > acked_) {
+      acked_ = upToSequence;
+    }
+    while (pendingCount_ > 0) {
+      const Pending& entry = pending_[pendingHead_ & (PIPELINE - 1)];
+      if (entry.sequence > acked_) {
+        break;
+      }
+      publishAt(entry.sequence, arena_.data() + entry.offset, entry.length);
+      acknowledge(entry.gatewayId, entry.gatewaySequence, entry.sequence, entry.timestamp);
+      arenaUsed_ -= entry.length;
+      pendingHead_++;
+      pendingCount_--;
+    }
+  }
+
   // The pending range leaves as one packet; on the wire a range is a batch or nothing.
   void flush() {
     if (!builder_.isOpen()) {
@@ -120,21 +172,30 @@ class Sequencer {
     packets_.send(packet_, builder_.close());
   }
 
-  // An empty range naming the next sequence, so a silent wire is distinguishable from a lossy
-  // one.
+  // An empty range naming the next unpublished sequence, so a silent wire is distinguishable
+  // from a lossy one; the standby hears the same pulse on its own carrier.
   void heartbeat() {
     flush();
-    builder_.open(sequence_ + 1, epoch_);
+    builder_.open(published_ + 1, epoch_);
     packets_.send(packet_, builder_.close());
+    shipMarker(published_ + 1, false);
   }
 
   void endSession() {
+    if (pendingCount_ != 0) {
+      // Closing the session over unpublished commands would put the end inside the stream.
+      throw std::runtime_error("end of session with the pipeline still holding commands");
+    }
     flush();
-    builder_.open(sequence_ + 1, epoch_);
+    builder_.open(published_ + 1, epoch_);
     packets_.send(packet_, builder_.closeEndOfSession());
+    shipMarker(published_ + 1, true);
   }
 
   std::uint64_t sequence() const { return sequence_; }
+  std::uint64_t published() const { return published_; }
+  std::uint64_t acked() const { return acked_; }
+  std::uint64_t pending() const { return pendingCount_; }
   std::uint64_t duplicates() const { return duplicates_; }
   std::uint64_t dropped() const { return dropped_; }
   std::uint64_t violations() const { return violations_; }
@@ -148,7 +209,64 @@ class Sequencer {
     std::vector<std::uint64_t> timestamp;
   };
 
-  void publish(const char* command, const std::size_t length) {
+  struct Pending {
+    std::uint64_t sequence = 0;
+    std::uint64_t gatewaySequence = 0;
+    std::uint64_t timestamp = 0;
+    std::uint32_t gatewayId = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t length = 0;
+  };
+
+  // One command to the standby as a one-message range, shipped the moment it is sequenced, so
+  // the link pipelines instead of waiting on batches.
+  void ship(const std::uint64_t sequence, const char* command, const std::size_t length) {
+    char range[common::ranges::PACKET_BYTES];
+    common::ranges::Builder builder(range, sizeof range);
+    builder.open(sequence, epoch_);
+    builder.add(command, static_cast<std::uint16_t>(length));
+    const std::size_t built = builder.close();
+    const std::size_t at = link_.claim(built);
+    std::memcpy(link_.buffer() + at, range, built);
+    link_.commit();
+    link_.publish();
+  }
+
+  void shipMarker(const std::uint64_t firstSequence, const bool end) {
+    char range[common::ranges::PACKET_BYTES];
+    common::ranges::Builder builder(range, sizeof range);
+    builder.open(firstSequence, epoch_);
+    const std::size_t built = end ? builder.closeEndOfSession() : builder.close();
+    const std::size_t at = link_.claim(built);
+    std::memcpy(link_.buffer() + at, range, built);
+    link_.commit();
+    link_.publish();
+  }
+
+  void enqueue(const std::uint64_t sequence, const std::uint32_t gatewayId,
+               const std::uint64_t gatewaySequence, const std::uint64_t timestamp,
+               const char* command, const std::size_t length) {
+    if (pendingCount_ == PIPELINE ||
+        arenaUsed_ + length + common::ranges::PACKET_BYTES > arena_.size()) {
+      throw std::runtime_error("the replication pipeline overflowed; the standby is gone");
+    }
+    if (arenaIn_ + length > arena_.size()) {
+      arenaIn_ = 0;
+    }
+    std::memcpy(arena_.data() + arenaIn_, command, length);
+    Pending& entry = pending_[(pendingHead_ + pendingCount_) & (PIPELINE - 1)];
+    entry.sequence = sequence;
+    entry.gatewaySequence = gatewaySequence;
+    entry.timestamp = timestamp;
+    entry.gatewayId = gatewayId;
+    entry.offset = static_cast<std::uint32_t>(arenaIn_);
+    entry.length = static_cast<std::uint32_t>(length);
+    arenaIn_ += length;
+    arenaUsed_ += length;
+    pendingCount_++;
+  }
+
+  void publishAt(const std::uint64_t sequence, const char* command, const std::size_t length) {
     const std::size_t at = out_.claim(length);
     std::memcpy(out_.buffer() + at, command, length);
     out_.commit();
@@ -157,9 +275,10 @@ class Sequencer {
       flush();
     }
     if (!builder_.isOpen()) {
-      builder_.open(sequence_, epoch_);
+      builder_.open(sequence, epoch_);
     }
     builder_.add(command, static_cast<std::uint16_t>(length));
+    published_ = sequence;
   }
 
   void acknowledge(const std::uint32_t gatewayId, const std::uint64_t gatewaySequence,
@@ -178,12 +297,22 @@ class Sequencer {
   PacketSink& packets_;
   Journal& journal_;
   Clock& clock_;
+  Link& link_;
+  Durability policy_;
   std::uint32_t epoch_;
   std::uint64_t sequence_ = 0;
+  std::uint64_t published_ = 0;
+  std::uint64_t acked_ = 0;
   std::uint64_t duplicates_ = 0;
   std::uint64_t dropped_ = 0;
   std::uint64_t violations_ = 0;
   std::vector<Gateway> gateways_;
+  std::vector<Pending> pending_;
+  std::vector<char> arena_;
+  std::uint64_t pendingHead_ = 0;
+  std::uint64_t pendingCount_ = 0;
+  std::size_t arenaIn_ = 0;
+  std::size_t arenaUsed_ = 0;
   char packet_[common::ranges::PACKET_BYTES] = {};
   common::ranges::Builder builder_;
 };
