@@ -55,9 +55,10 @@ metal so no hypervisor sits between the process and the machine. The deployment 
 hardware: a partition and the rings it touches live on one socket with memory touched first from
 the core that owns it, hyperthread siblings stay idle, interrupts and housekeeping are herded to
 the other socket, and the setup script records what actually took so a manifest can say whether
-the isolation asked for was the isolation received. Huge pages, both 2MB and 1GB, are a measured
-comparison for the slab and the rings, and so is 128 byte separation of write-shared fields,
-since Ice Lake's L2 spatial prefetcher pulls cache lines in pairs. Off box, a VPC carries no
+the isolation asked for was the isolation received. The rings advise transparent huge
+pages outright and deployment puts them on tmpfs where the kernel can oblige; explicit 2MB and
+1GB pages for the slab remain a campaign question, and so does 128 byte separation of
+write-shared fields, since Ice Lake's L2 spatial prefetcher pulls cache lines in pairs. Off box, a VPC carries no
 native multicast, which touches the packet publication story only when the venue leaves the
 machine.
 
