@@ -1,0 +1,36 @@
+# Every merge to main is gated on this: the build, the tests, and the pinned format sweep. What
+# lands is what passed on a machine nobody's editor had prepared.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A follow-up push cancels the run it obsoleted, since two runs of one branch answer the same
+# question twice and the second answer is the one that matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The formatter is pinned in .clang-format-version and fetched exactly by pipx, so the
+      # runner and a laptop cannot disagree about wrapping.
+      - run: |
+          files=$(find . -path ./build -prune -o \( -name '*.cpp' -o -name '*.hpp' \) -print)
+          if [ -n "$files" ]; then
+            printf '%s\n' "$files" | tr '\n' '\0' \
+              | xargs -0 pipx run clang-format==$(cat .clang-format-version) --dry-run --Werror
+          fi
