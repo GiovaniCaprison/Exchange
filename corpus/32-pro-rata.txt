@@ -1,0 +1,14 @@
+# Pro-rata apportions in proportion to displayed quantity.
+INSTRUMENT tick=5 lot=1 min=1 max=1000000 band=500 open=100000 alloc=PRO_RATA
+SESSION CONTINUOUS
+STATE CONTINUOUS
+NEW BUY LIMIT GTC 100000 60 #1
+ACCEPTED #1 order=1
+RESTED order=1 BUY 100000 60
+NEW BUY LIMIT GTC 100000 40 #2 p=2
+ACCEPTED #2 order=2
+RESTED order=2 BUY 100000 40
+NEW SELL LIMIT IOC 99995 50 #3 p=3
+ACCEPTED #3 order=3
+EXECUTED exec=1 aggressor=3 resting=1 100000 30
+EXECUTED exec=2 aggressor=3 resting=2 100000 20

@@ -1,0 +1,15 @@
+# An auction uncrosses when the engine leaves the call phase, at one price, before the new state
+# is reported, and the indicative is reported whenever it changes during the call.
+INSTRUMENT tick=5 lot=1 min=1 max=1000000 band=500 open=100000 alloc=PRICE_TIME
+SESSION OPENING_AUCTION
+STATE OPENING_AUCTION
+NEW BUY LIMIT GTC 100000 50 #1
+ACCEPTED #1 order=1
+RESTED order=1 BUY 100000 50
+NEW SELL LIMIT GTC 99995 30 #2
+ACCEPTED #2 order=2
+RESTED order=2 SELL 99995 30
+INDICATIVE 100000 30
+SESSION CONTINUOUS
+EXECUTED exec=1 aggressor=1 resting=2 100000 30
+STATE CONTINUOUS

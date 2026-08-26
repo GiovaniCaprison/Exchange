@@ -1,0 +1,8 @@
+# Until a state command arrives the engine is in pre-open, so nothing matches.
+INSTRUMENT tick=5 lot=1 min=1 max=1000000 band=500 open=100000 alloc=PRICE_TIME
+NEW BUY LIMIT GTC 100000 30 #1
+ACCEPTED #1 order=1
+RESTED order=1 BUY 100000 30
+NEW SELL LIMIT GTC 99995 20 #2
+ACCEPTED #2 order=2
+RESTED order=2 SELL 99995 20

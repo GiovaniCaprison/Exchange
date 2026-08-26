@@ -1,0 +1,20 @@
+# A replenished tranche queues behind what was already at the price.
+INSTRUMENT tick=5 lot=1 min=1 max=1000000 band=500 open=100000 alloc=PRICE_TIME
+SESSION CONTINUOUS
+STATE CONTINUOUS
+NEW BUY LIMIT GTC 100000 100 display=20 #1
+ACCEPTED #1 order=1
+RESTED order=1 BUY 100000 20
+NEW BUY LIMIT GTC 100000 30 #2
+ACCEPTED #2 order=2
+RESTED order=2 BUY 100000 30
+NEW SELL LIMIT IOC 99995 20 #3
+ACCEPTED #3 order=3
+EXECUTED exec=1 aggressor=3 resting=1 100000 20
+RESTED order=1 BUY 100000 20
+NEW SELL LIMIT IOC 99995 30 #4
+ACCEPTED #4 order=4
+EXECUTED exec=2 aggressor=4 resting=2 100000 30
+NEW SELL LIMIT IOC 99995 5 #5
+ACCEPTED #5 order=5
+EXECUTED exec=3 aggressor=5 resting=1 100000 5

@@ -1,0 +1,16 @@
+# A replace lowering quantity at the same price keeps queue position, reported as a reduction.
+INSTRUMENT tick=5 lot=1 min=1 max=1000000 band=500 open=100000 alloc=PRICE_TIME
+SESSION CONTINUOUS
+STATE CONTINUOUS
+NEW BUY LIMIT GTC 100000 50 #1
+ACCEPTED #1 order=1
+RESTED order=1 BUY 100000 50
+NEW BUY LIMIT GTC 100000 30 #2
+ACCEPTED #2 order=2
+RESTED order=2 BUY 100000 30
+REPLACE #1 20 100000
+REDUCED order=1 20
+NEW SELL LIMIT IOC 99995 25 #3
+ACCEPTED #3 order=3
+EXECUTED exec=1 aggressor=3 resting=1 100000 20
+EXECUTED exec=2 aggressor=3 resting=2 100000 5
