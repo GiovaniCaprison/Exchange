@@ -1,0 +1,8 @@
+# A waiting stop cancels by name and takes its whole quantity with it.
+INSTRUMENT tick=5 lot=1 min=1 max=1000000 band=500 open=100000 alloc=PRICE_TIME
+SESSION CONTINUOUS
+STATE CONTINUOUS
+NEW BUY MARKET IOC 0 25 trigger=100010 #1
+ACCEPTED #1 order=1
+CANCEL #1
+REMOVED order=1 25 CANCELLED

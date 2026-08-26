@@ -1,0 +1,14 @@
+# Within a price, arrival order decides.
+INSTRUMENT tick=5 lot=1 min=1 max=1000000 band=500 open=100000 alloc=PRICE_TIME
+SESSION CONTINUOUS
+STATE CONTINUOUS
+NEW BUY LIMIT GTC 100000 30 #1
+ACCEPTED #1 order=1
+RESTED order=1 BUY 100000 30
+NEW BUY LIMIT GTC 100000 30 #2
+ACCEPTED #2 order=2
+RESTED order=2 BUY 100000 30
+NEW SELL MARKET IOC 0 40 #3
+ACCEPTED #3 order=3
+EXECUTED exec=1 aggressor=3 resting=1 100000 30
+EXECUTED exec=2 aggressor=3 resting=2 100000 10

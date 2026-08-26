@@ -82,7 +82,10 @@ Hidden quantity is never reported: what rests, reduces and removes is displayed 
 consumer's book is the visible book. Engine order ids and execution ids are assigned from
 per-partition counters, unique within the partition for the session. Applying any prefix of the
 event stream yields a valid book, so a consumer applies events one at a time and is never asked to
-hold one back.
+hold one back. An execution reduces whichever of its two orders the consumer's book holds and
+removes one it reduces to zero: in continuous trading that is the resting order alone, since an
+aggressor is never in the book while it takes, and in an uncrossing it is both, since neither side
+aggressed.
 
 ## Enumerations
 

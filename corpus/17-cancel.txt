@@ -1,0 +1,11 @@
+# A resting order cancels by the id it was entered with; an unknown one is reported.
+INSTRUMENT tick=5 lot=1 min=1 max=1000000 band=500 open=100000 alloc=PRICE_TIME
+SESSION CONTINUOUS
+STATE CONTINUOUS
+NEW BUY LIMIT GTC 100000 50 #1
+ACCEPTED #1 order=1
+RESTED order=1 BUY 100000 50
+CANCEL #1
+REMOVED order=1 50 CANCELLED
+CANCEL #1
+REJECTED #1 UNKNOWN_ORDER
