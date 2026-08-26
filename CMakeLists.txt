@@ -22,3 +22,16 @@ execute_process(
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 enable_testing()
+
+# The test framework, fetched by exact tag so every machine tests with the same one. A test's name
+# is prose, so it can say what it proves.
+include(FetchContent)
+FetchContent_Declare(
+  Catch2
+  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+  GIT_TAG v3.7.1
+  GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(Catch2)
+list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
+
+add_subdirectory(schema)
