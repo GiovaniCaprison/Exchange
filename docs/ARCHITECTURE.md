@@ -71,6 +71,17 @@ exactly when every component is deterministic: the same sequenced input produces
 output, which this repository holds as a tested requirement on every component rather than an
 assumption (Schneider 1990).
 
+The sequencer is the one process that cannot borrow its availability this way, because it creates
+the sequence rather than consuming it, so its survival is built from three mechanisms. A command
+is acknowledged and published only once it is replicated to the standby, so published is a subset
+of replicated and the standby always holds everything any consumer has seen. Epoch numbers on
+every published range enforce that at most one sequencer extends the log: a stale epoch is
+rejected everywhere. And a witness process arbitrates the lease between the two sequencers, since
+two nodes alone cannot decide leadership under a partition; the fixed roles of primary, standby
+and witness are the deployment venues actually run, and the general form they simplify is leader
+based log replication (Ongaro and Ousterhout 2014, Raft). The protocol's leadership section
+carries the mechanics.
+
 Recovery composes from the same parts. A process restores its most recent snapshot, replays the
 journal suffix from the sequence the snapshot names, and the events it emits are byte identical to
 the run that never stopped. The determinism suite in each component exercises exactly that: replay

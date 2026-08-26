@@ -28,7 +28,9 @@ Every command opens with the same 24 byte composite, written by the sequencer:
 
 The matcher trusts the context (P-9's boundary sits above it): sequence is gap free within the
 partition's subscription, the timestamp is the venue's one clock reading for this command, and the
-instrument routes to a book this partition owns.
+instrument routes to a book this partition owns. A gateway submits the command with these two
+fields zeroed, and the sequencer writes them in place at sequencing, which is why they sit at the
+context's front: the submission plane below names the mechanism.
 
 ## The event context
 
@@ -172,6 +174,52 @@ be told to rest, post-only cannot be paired with an immediate time in force), th
 on tick, inside the static band, inside the dynamic band, then trigger price checks, and last the
 checks that read the book: post-only crossing, FILL_OR_KILL fillability, minQuantity fillability.
 A refusal reports the first failing check's reason and changes nothing.
+
+## The submission plane
+
+A gateway submits commands to the sequencer as a framed GatewaySubmission message, gatewaySequence
+u64, gatewayId u32, reserved u32, 24 bytes with its header, followed by one framed command whose
+context carries its instrument and zeroes for sequence and timestamp. The
+sequencer deduplicates on (gatewayId, gatewaySequence), assigns the next global sequence, stamps
+the venue's one timestamp, and writes both into the command's context in place, so the journaled
+and published stream is made of ordinary commands and no consumer knows the submission plane
+exists. Exactly-once is retry plus deduplication: a gateway that never saw an acknowledgment
+resubmits under the same gatewaySequence, and the sequencer's dedupe makes the retry harmless.
+
+The acknowledgment is CommandSequenced: the gateway's own sequence, the global sequence it
+received, and the stamped timestamp. It is sent only once the command is durable under the
+configured policy, so an acknowledged command survives the sequencer's death.
+
+## Publication and replication ranges
+
+The sequenced stream travels as ranges, on the public carrier and the replication link alike,
+each opened by a framed RangeHeader message, firstSequence u64, epoch u32, count u16, reserved
+u16, 24 bytes with its header, followed by count framed messages each prefixed by its u16 length.
+A count of zero is a heartbeat carrying the next sequence, so silence is distinguishable from
+loss; a count of 65535 is end of session. The shape follows MoldUDP64 (Nasdaq, public specification), with the epoch in
+place of the session name. A consumer that misses packets asks the rewinder with RewindRequest,
+naming a first sequence and a count, and receives ordinary ranges from the journal.
+
+Replication is the same ranges over a private link, acknowledged by ReplicationAck naming the
+epoch and the highest contiguous sequence held. Two durability policies exist and every
+measurement's manifest names the one it ran under: safe, where the primary publishes a command
+only after the standby's acknowledgment covers it, and local, where publication follows the
+journal write alone. Under the safe policy the invariant that failover rests on holds by
+construction: published is a subset of replicated, so the standby holds everything any consumer
+has ever seen.
+
+## Leadership
+
+At most one sequencer extends the log, and epochs are how that is enforced. Every range carries
+the epoch it was published under; gateways and consumers reject a stale epoch outright. A witness
+process arbitrates the lease: LeaseRequest names the requesting node, the epoch it wants (its
+current one to renew, a higher one to take over) and the highest sequence it holds; LeaseResponse
+names the holder, the epoch and the remaining time. The witness grants a higher epoch only when
+the standing lease has expired, so a live primary cannot be usurped, and an expired primary must
+stop publishing before its lease can be granted away, which is what makes the handover safe. A
+standby that wins epoch E+1 first publishes any replicated suffix the old primary never
+published, then continues sequencing; the stitched stream across epochs is gap free and duplicate
+free, and the determinism suite holds it to that.
 
 ## The ring
 

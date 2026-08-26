@@ -9,7 +9,11 @@
 
 #include "exchange_protocol/AuctionIndicative.h"
 #include "exchange_protocol/CancelOrder.h"
+#include "exchange_protocol/CommandSequenced.h"
+#include "exchange_protocol/GatewaySubmission.h"
 #include "exchange_protocol/InstrumentDefinition.h"
+#include "exchange_protocol/LeaseRequest.h"
+#include "exchange_protocol/LeaseResponse.h"
 #include "exchange_protocol/MassCancel.h"
 #include "exchange_protocol/MessageHeader.h"
 #include "exchange_protocol/NewOrder.h"
@@ -20,7 +24,10 @@
 #include "exchange_protocol/OrderRemoved.h"
 #include "exchange_protocol/OrderRested.h"
 #include "exchange_protocol/OrderTriggered.h"
+#include "exchange_protocol/RangeHeader.h"
 #include "exchange_protocol/ReplaceOrder.h"
+#include "exchange_protocol/ReplicationAck.h"
+#include "exchange_protocol/RewindRequest.h"
 #include "exchange_protocol/SessionControl.h"
 #include "exchange_protocol/SessionStateChanged.h"
 
@@ -48,9 +55,73 @@ Decoder decoded(std::vector<char>& space) {
 
 }  // namespace
 
-TEST_CASE("the contexts hold the sizes the protocol document names") {
+TEST_CASE("the contexts and carrier prefixes hold the sizes the protocol document names") {
   CHECK(CommandContext::encodedLength() == 24);
   CHECK(EventContext::encodedLength() == 32);
+  CHECK(MessageHeader::encodedLength() + GatewaySubmission::sbeBlockLength() == 24);
+  CHECK(MessageHeader::encodedLength() + RangeHeader::sbeBlockLength() == 24);
+}
+
+TEST_CASE("the carrier prefixes round trip") {
+  std::vector<char> space(256);
+  {
+    auto out = encoded<GatewaySubmission>(space);
+    out.gatewaySequence(9).gatewayId(3).reserved(0);
+    auto in = decoded<GatewaySubmission>(space);
+    CHECK(in.gatewaySequence() == 9);
+    CHECK(in.gatewayId() == 3);
+  }
+  {
+    auto out = encoded<RangeHeader>(space);
+    out.firstSequence(100).epoch(2).count(7).reserved(0);
+    auto in = decoded<RangeHeader>(space);
+    CHECK(in.firstSequence() == 100);
+    CHECK(in.epoch() == 2);
+    CHECK(in.count() == 7);
+  }
+}
+
+TEST_CASE("the sequencing plane's messages round trip") {
+  std::vector<char> space(256);
+  {
+    auto out = encoded<CommandSequenced>(space);
+    out.gatewaySequence(9).sequence(42).timestamp(1'000'000'000'042ULL);
+    auto in = decoded<CommandSequenced>(space);
+    CHECK(in.gatewaySequence() == 9);
+    CHECK(in.sequence() == 42);
+    CHECK(in.timestamp() == 1'000'000'000'042ULL);
+  }
+  {
+    auto out = encoded<ReplicationAck>(space);
+    out.upToSequence(42).epoch(3).reserved(0);
+    auto in = decoded<ReplicationAck>(space);
+    CHECK(in.upToSequence() == 42);
+    CHECK(in.epoch() == 3);
+  }
+  {
+    auto out = encoded<LeaseRequest>(space);
+    out.lastSequence(42).nodeId(2).epoch(4);
+    auto in = decoded<LeaseRequest>(space);
+    CHECK(in.lastSequence() == 42);
+    CHECK(in.nodeId() == 2);
+    CHECK(in.epoch() == 4);
+  }
+  {
+    auto out = encoded<LeaseResponse>(space);
+    out.ttl(500'000'000).epoch(4).holder(2).granted(1);
+    auto in = decoded<LeaseResponse>(space);
+    CHECK(in.ttl() == 500'000'000);
+    CHECK(in.epoch() == 4);
+    CHECK(in.holder() == 2);
+    CHECK(in.granted() == 1);
+  }
+  {
+    auto out = encoded<RewindRequest>(space);
+    out.firstSequence(100).count(50).reserved(0);
+    auto in = decoded<RewindRequest>(space);
+    CHECK(in.firstSequence() == 100);
+    CHECK(in.count() == 50);
+  }
 }
 
 TEST_CASE("a new order round trips with every field the protocol defines") {
