@@ -37,6 +37,8 @@ allocation, held by a counting-allocator probe (P-6). Byte determinism, held by 
 kill-and-restore suites (P-2). A behavioural corpus where the component makes decisions, and
 invariants over generated flow where it keeps state (P-7). A measurement harness writing raw
 series and an honest manifest (P-14). One concern per pull request, each green before the next.
+The mechanisms that surround every component, the sanitizer flavour, the codegen ritual, the
+toolchain policy and the box itself, are the standing document [PRACTICE.md](../PRACTICE.md).
 
 ## What each landing changes in the standing documents
 
