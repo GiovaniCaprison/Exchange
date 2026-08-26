@@ -173,6 +173,16 @@ on tick, inside the static band, inside the dynamic band, then trigger price che
 checks that read the book: post-only crossing, FILL_OR_KILL fillability, minQuantity fillability.
 A refusal reports the first failing check's reason and changes nothing.
 
+## The ring
+
+On-box transport is a single-producer single-consumer ring over a mapped file. Records are eight
+byte aligned: a u32 payload length, a u32 kind (0 a message, 1 padding), then the payload, which
+is one framed message. Padding records fill the tail of the buffer when a claim would wrap, so a
+message is always contiguous. The producer claims space, encodes in place, and publishes a whole
+command's events with one release of its position, so a consumer sees a command's batch or
+nothing; a full ring is back pressure and the producer waits, because a dropped event is a stream
+that cannot rebuild a book.
+
 ## The journal
 
 The sequencer's journal is the append-only record of the sequenced command stream, and a matcher
