@@ -1,5 +1,8 @@
 # CMake build output, including anything fetched into it at configure time
 build/
 
+# clangd's index, rebuilt by the editor from the compile database
+.cache/
+
 # Measurement runs, which are pulled off the machine that made them rather than committed
 results/

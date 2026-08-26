@@ -18,9 +18,7 @@
 #include "exchange_protocol/MessageHeader.h"
 #include "exchange_protocol/NewOrder.h"
 
-namespace exchange::common {
-
-namespace journal {
+namespace exchange::common::journal {
 
 inline constexpr char MAGIC[8] = {'E', 'X', 'J', 'R', 'N', 'L', '0', '1'};
 
@@ -117,6 +115,4 @@ inline Read read(const std::string& path) {
   return result;
 }
 
-}  // namespace journal
-
-}  // namespace exchange::common
+}  // namespace exchange::common::journal
