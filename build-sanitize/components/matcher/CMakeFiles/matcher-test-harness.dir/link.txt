@@ -1,2 +1,0 @@
-/usr/bin/ar qc libmatcher-test-harness.a "CMakeFiles/matcher-test-harness.dir/test/harness.cpp.o"
-/usr/bin/ranlib libmatcher-test-harness.a

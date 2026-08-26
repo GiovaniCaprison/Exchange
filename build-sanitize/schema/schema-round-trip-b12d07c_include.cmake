@@ -1,5 +1,0 @@
-if(EXISTS "/Users/louisgrennell/Exchange/build-sanitize/schema/schema-round-trip-b12d07c_tests.cmake")
-  include("/Users/louisgrennell/Exchange/build-sanitize/schema/schema-round-trip-b12d07c_tests.cmake")
-else()
-  add_test(schema-round-trip_NOT_BUILT-b12d07c schema-round-trip_NOT_BUILT-b12d07c)
-endif()

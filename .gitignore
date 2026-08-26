@@ -1,5 +1,5 @@
-# CMake build output, including anything fetched into it at configure time
-build/
+# CMake build output for every flavour, including anything fetched into it at configure time
+build*/
 
 # clangd's index, rebuilt by the editor from the compile database
 .cache/

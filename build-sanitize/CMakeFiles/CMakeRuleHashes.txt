@@ -1,3 +1,0 @@
-# Hashes of file build rules.
-2436b1820257f6010281b2c85f58ad6c schema/CMakeFiles/exchange-protocol-codecs
-f45892af71a63bd559970c250eff812f schema/generated/exchange_protocol/NewOrder.h

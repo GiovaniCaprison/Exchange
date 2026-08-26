@@ -1,5 +1,0 @@
-add_test( [==[nothing is visible before publish, and a batch appears whole]==] /Users/louisgrennell/Exchange/build-sanitize/components/matcher/matcher-ring [==[nothing is visible before publish\, and a batch appears whole]==]  )
-set_tests_properties( [==[nothing is visible before publish, and a batch appears whole]==] PROPERTIES WORKING_DIRECTORY /Users/louisgrennell/Exchange/build-sanitize/components/matcher SKIP_RETURN_CODE 4)
-add_test( [==[a small ring wraps invisibly and back pressure never drops a message]==] /Users/louisgrennell/Exchange/build-sanitize/components/matcher/matcher-ring [==[a small ring wraps invisibly and back pressure never drops a message]==]  )
-set_tests_properties( [==[a small ring wraps invisibly and back pressure never drops a message]==] PROPERTIES WORKING_DIRECTORY /Users/louisgrennell/Exchange/build-sanitize/components/matcher SKIP_RETURN_CODE 4)
-set( matcher-ring_TESTS [==[nothing is visible before publish, and a batch appears whole]==] [==[a small ring wraps invisibly and back pressure never drops a message]==])

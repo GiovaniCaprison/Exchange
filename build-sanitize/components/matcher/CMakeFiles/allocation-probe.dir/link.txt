@@ -1,1 +1,0 @@
-/usr/bin/c++ -g -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names -fsanitize=address,undefined "CMakeFiles/allocation-probe.dir/test/allocation_probe_main.cpp.o" -o allocation-probe  libmatcher-test-harness.a
