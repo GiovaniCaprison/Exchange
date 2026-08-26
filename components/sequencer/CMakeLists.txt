@@ -28,6 +28,7 @@ target_link_libraries(sequencer-sources
 # The process itself, and the generator that writes the submission files the proofs share.
 add_executable(sequencer src/sequencer_main.cpp)
 target_link_libraries(sequencer PRIVATE exchange-sequencer)
+exchange_measured(sequencer)
 
 add_executable(subgen test/subgen_main.cpp)
 target_link_libraries(subgen PRIVATE exchange-sequencer matcher-test-harness)
@@ -52,6 +53,7 @@ add_dependencies(sequencer-allocation sequencer-allocation-probe)
 
 add_executable(sequencer-benchmark src/benchmark_main.cpp)
 target_link_libraries(sequencer-benchmark PRIVATE exchange-sequencer)
+exchange_measured(sequencer-benchmark)
 
 catch_discover_tests(sequencer-stream)
 catch_discover_tests(sequencer-dedupe)

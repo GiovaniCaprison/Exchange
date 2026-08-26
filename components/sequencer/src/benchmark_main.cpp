@@ -29,6 +29,10 @@
 #include "journal.hpp"
 #include "sequencer.hpp"
 
+#ifndef EXCHANGE_BUILD_FLAGS
+#define EXCHANGE_BUILD_FLAGS "unrecorded"
+#endif
+
 namespace {
 
 namespace common = exchange::common;
@@ -191,6 +195,7 @@ int main(const int count, char** values) {
              << "  \"warmup\": " << warmup << ",\n"
              << "  \"policy\": \"" << policy << "\",\n"
              << "  \"isolation\": \"" << isolation << "\",\n"
+             << "  \"build\": \"" << EXCHANGE_BUILD_FLAGS << "\",\n"
              << "  \"system\": \"" << machine.sysname << " " << machine.release << " "
              << machine.machine << "\",\n"
              << "  \"compiler\": \"" <<
