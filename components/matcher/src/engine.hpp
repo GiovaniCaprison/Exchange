@@ -241,7 +241,7 @@ class Engine {
   // The engine's state beyond its structures: prices the session has moved, the trading state,
   // and the indicative deduplication pair. Geometry and per-instrument facts come from
   // construction, and the pending queue is empty between commands, which is when snapshots happen.
-  void save(ByteSink& sink) const {
+  void save(common::ByteSink& sink) const {
     sink.i64(reference_);
     sink.i64(lastExecuted_);
     sink.i32(state_);
@@ -251,7 +251,7 @@ class Engine {
     triggers_.save(sink);
   }
 
-  void restore(ByteSource& source) {
+  void restore(common::ByteSource& source) {
     reference_ = source.i64();
     lastExecuted_ = source.i64();
     state_ = source.i32();

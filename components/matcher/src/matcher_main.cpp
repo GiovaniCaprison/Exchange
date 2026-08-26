@@ -30,6 +30,7 @@
 namespace {
 
 namespace matching = exchange::matcher;
+namespace common = exchange::common;
 
 volatile std::sig_atomic_t stopped = 0;
 
@@ -94,9 +95,9 @@ int replay(const std::string& journalPath, const std::string& eventsPath,
   matching::Partition<FileRing> partition(ring);
   std::uint64_t from = 0;
   if (!restorePath.empty()) {
-    from = matching::snapshot::restore(restorePath, partition);
+    from = common::snapshot::restore(restorePath, partition);
   }
-  matching::journal::Read log = matching::journal::read(journalPath);
+  common::journal::Read log = common::journal::read(journalPath);
   for (std::size_t at = 0; at < log.count(); at++) {
     char* message = log.messages.data() + log.offsets[at];
     const std::uint64_t sequence = sequenceOf(message, log.lengths[at]);
@@ -105,7 +106,7 @@ int replay(const std::string& journalPath, const std::string& eventsPath,
     }
     partition.onCommand(message, 0, log.lengths[at]);
     if (!snapshotPath.empty() && sequence == snapshotAt) {
-      matching::snapshot::write(snapshotPath, partition);
+      common::snapshot::write(snapshotPath, partition);
     }
     if (stopAt != 0 && sequence == stopAt) {
       break;
@@ -123,14 +124,14 @@ int replay(const std::string& journalPath, const std::string& eventsPath,
 
 int live(const std::string& inPath, const std::string& outPath, const std::string& journalPath,
          const std::string& restorePath, const std::string& snapshotPath) {
-  matching::SpscRing out = matching::SpscRing::create(outPath, 1 << 24);
-  matching::SpscRing in = matching::SpscRing::attach(inPath);
-  matching::Partition<matching::SpscRing> partition(out);
+  common::SpscRing out = common::SpscRing::create(outPath, 1 << 24);
+  common::SpscRing in = common::SpscRing::attach(inPath);
+  matching::Partition<common::SpscRing> partition(out);
   std::uint64_t from = 0;
   if (!restorePath.empty()) {
-    from = matching::snapshot::restore(restorePath, partition);
+    from = common::snapshot::restore(restorePath, partition);
   }
-  matching::journal::Writer journal(journalPath);
+  common::journal::Writer journal(journalPath);
   std::signal(SIGINT, onSignal);
   std::signal(SIGTERM, onSignal);
   while (stopped == 0) {
@@ -143,7 +144,7 @@ int live(const std::string& inPath, const std::string& outPath, const std::strin
     });
   }
   if (!snapshotPath.empty()) {
-    matching::snapshot::write(snapshotPath, partition);
+    common::snapshot::write(snapshotPath, partition);
   }
   return 0;
 }

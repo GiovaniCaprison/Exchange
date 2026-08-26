@@ -12,7 +12,7 @@
 
 #include "spsc_ring.hpp"
 
-using namespace exchange::matcher;
+namespace common = exchange::common;
 
 namespace {
 
@@ -20,7 +20,7 @@ std::filesystem::path scratch(const std::string& name) {
   return std::filesystem::temp_directory_path() / ("exchange-ring-" + name);
 }
 
-void put(SpscRing& ring, const std::uint64_t value) {
+void put(common::SpscRing& ring, const std::uint64_t value) {
   const std::size_t at = ring.claim(sizeof value);
   std::memcpy(ring.buffer() + at, &value, sizeof value);
   ring.commit();
@@ -30,8 +30,8 @@ void put(SpscRing& ring, const std::uint64_t value) {
 
 TEST_CASE("nothing is visible before publish, and a batch appears whole") {
   const std::filesystem::path path = scratch("batch.ring");
-  SpscRing producer = SpscRing::create(path.string(), 1 << 12);
-  SpscRing consumer = SpscRing::attach(path.string());
+  common::SpscRing producer = common::SpscRing::create(path.string(), 1 << 12);
+  common::SpscRing consumer = common::SpscRing::attach(path.string());
 
   put(producer, 1);
   put(producer, 2);
@@ -52,8 +52,8 @@ TEST_CASE("nothing is visible before publish, and a batch appears whole") {
 
 TEST_CASE("a small ring wraps invisibly and back pressure never drops a message") {
   const std::filesystem::path path = scratch("wrap.ring");
-  SpscRing producer = SpscRing::create(path.string(), 1 << 10);
-  SpscRing consumer = SpscRing::attach(path.string());
+  common::SpscRing producer = common::SpscRing::create(path.string(), 1 << 10);
+  common::SpscRing consumer = common::SpscRing::attach(path.string());
   constexpr std::uint64_t MESSAGES = 200'000;
 
   std::thread consuming([&consumer] {

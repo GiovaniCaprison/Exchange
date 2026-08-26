@@ -176,7 +176,7 @@ class Ladder {
   std::int32_t rankCount() const { return ranks_; }
 
   // The ladder's state is its arrays and its cached best; the geometry comes from construction.
-  void save(ByteSink& sink) const {
+  void save(common::ByteSink& sink) const {
     sink.span(queues_);
     sink.span(totals_);
     sink.span(bits0_);
@@ -185,7 +185,7 @@ class Ladder {
     sink.i32(best_);
   }
 
-  void restore(ByteSource& source) {
+  void restore(common::ByteSource& source) {
     source.span(queues_);
     source.span(totals_);
     source.span(bits0_);

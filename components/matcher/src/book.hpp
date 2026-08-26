@@ -172,7 +172,7 @@ class Book {
 
   std::int32_t tickCount() const { return maxRank_ + 1; }
 
-  void save(ByteSink& sink) const {
+  void save(common::ByteSink& sink) const {
     bids_.save(sink);
     asks_.save(sink);
     sink.span(names_);
@@ -180,7 +180,7 @@ class Book {
     sink.u64(nameCount_);
   }
 
-  void restore(ByteSource& source) {
+  void restore(common::ByteSource& source) {
     bids_.restore(source);
     asks_.restore(source);
     source.span(names_);

@@ -18,7 +18,7 @@
 #include "exchange_protocol/MessageHeader.h"
 #include "exchange_protocol/NewOrder.h"
 
-namespace exchange::matcher {
+namespace exchange::common {
 
 namespace journal {
 
@@ -119,4 +119,4 @@ inline Read read(const std::string& path) {
 
 }  // namespace journal
 
-}  // namespace exchange::matcher
+}  // namespace exchange::common

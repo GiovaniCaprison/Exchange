@@ -13,13 +13,14 @@
 #include "journal.hpp"
 
 using namespace exchange::matcher;
+namespace common = exchange::common;
 using namespace exchange::matcher::test;
 
 namespace {
 
 std::filesystem::path writeJournal() {
   const std::filesystem::path path = std::filesystem::temp_directory_path() / "exchange-probe.exj";
-  journal::Writer writer(path.string());
+  common::journal::Writer writer(path.string());
   for (const CommandWriter::Framed& framed : generatedFlow(31, 50'000)) {
     writer.append(framed.bytes.data(), static_cast<std::uint32_t>(framed.bytes.size()));
   }

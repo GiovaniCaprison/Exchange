@@ -23,7 +23,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace exchange::matcher {
+namespace exchange::common {
 
 class SpscRing {
  public:
@@ -189,4 +189,4 @@ class SpscRing {
   std::uint64_t readPosition_ = 0;
 };
 
-}  // namespace exchange::matcher
+}  // namespace exchange::common
