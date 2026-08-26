@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" byteOrder="littleEndian" description="The exchange's sequenced commands and events" id="1" package="exchange.protocol" semanticVersion="1.0" version="0">
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" byteOrder="littleEndian" description="The exchange's sequenced commands and events" id="1" package="exchange.protocol" semanticVersion="1.1" version="1">
   <!--
     Every message that crosses a process boundary. docs/PROTOCOL.md is the contract this file
     implements: field orders, alignment, semantics and the refusal precedence all live there, and a
@@ -151,6 +151,54 @@
   <sbe:message name="SessionControl" id="6" description="Enter a trading state">
     <field name="context" id="1" type="CommandContext"/>
     <field name="state" id="2" type="SessionState"/>
+  </sbe:message>
+
+  <sbe:message name="CommandSequenced" id="20" description="The sequencer's acknowledgment to a gateway: the submission is durable and holds this place in the order">
+    <field name="gatewaySequence" id="1" type="uint64"/>
+    <field name="sequence" id="2" type="uint64"/>
+    <field name="timestamp" id="3" type="uint64"/>
+  </sbe:message>
+
+  <sbe:message name="ReplicationAck" id="21" description="The standby has the stream up to this sequence at this epoch">
+    <field name="upToSequence" id="1" type="uint64"/>
+    <field name="epoch" id="2" type="uint32"/>
+    <field name="reserved" id="3" type="uint32"/>
+  </sbe:message>
+
+  <sbe:message name="LeaseRequest" id="22" description="A node asks the witness to hold or take the sequencing lease">
+    <field name="lastSequence" id="1" type="uint64"/>
+    <field name="nodeId" id="2" type="uint32"/>
+    <!-- The current epoch to renew, or a higher one to take over. -->
+    <field name="epoch" id="3" type="uint32"/>
+  </sbe:message>
+
+  <sbe:message name="LeaseResponse" id="23" description="The witness's answer: who holds which epoch, for how long">
+    <field name="ttl" id="1" type="uint64"/>
+    <field name="epoch" id="2" type="uint32"/>
+    <field name="holder" id="3" type="uint32"/>
+    <field name="granted" id="4" type="uint8"/>
+  </sbe:message>
+
+  <sbe:message name="RewindRequest" id="24" description="A consumer asks the rewinder for a range of the sequenced stream">
+    <field name="firstSequence" id="1" type="uint64"/>
+    <field name="count" id="2" type="uint32"/>
+    <field name="reserved" id="3" type="uint32"/>
+  </sbe:message>
+
+  <sbe:message name="GatewaySubmission" id="25" description="Prefixes a framed command on the gateway to sequencer carrier">
+    <!-- The gateway's own numbering of what it submits; the sequencer deduplicates on the pair. -->
+    <field name="gatewaySequence" id="1" type="uint64"/>
+    <field name="gatewayId" id="2" type="uint32"/>
+    <field name="reserved" id="3" type="uint32"/>
+  </sbe:message>
+
+  <sbe:message name="RangeHeader" id="26" description="Opens a range of the sequenced stream, on the publication and replication carriers alike">
+    <field name="firstSequence" id="1" type="uint64"/>
+    <!-- The leadership epoch the range was published under; consumers reject stale epochs. -->
+    <field name="epoch" id="2" type="uint32"/>
+    <!-- Messages in the range. Zero is a heartbeat; 65535 is end of session. -->
+    <field name="count" id="3" type="uint16"/>
+    <field name="reserved" id="4" type="uint16"/>
   </sbe:message>
 
   <sbe:message name="OrderAccepted" id="10" description="Admitted, with its engine order id">
