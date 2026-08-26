@@ -45,11 +45,6 @@ toolchain policy and the box itself, are the standing document [PRACTICE.md](../
 The standing documents stay finished-state, so each component's arrival rewrites them rather than
 appending futures to them. The ledger of what to touch:
 
-- sequencer: PROTOCOL.md gains the gateway-to-sequencer envelope and acknowledgment, the epoch
-  field on publication, the replication and lease messages, and the publication packet framing;
-  the schema grows the same; ARCHITECTURE.md's availability section gains the witness, epochs and
-  the replicated-before-published rule; README.md's layout and component list gain the sequencer
-  and the consumer library.
 - gateway: PROTOCOL.md gains the session layer (login, heartbeats, session sequence, replay) and
   the client-facing order entry translation; ARCHITECTURE.md's gateway paragraph deepens with the
   resubmission-after-failover contract.

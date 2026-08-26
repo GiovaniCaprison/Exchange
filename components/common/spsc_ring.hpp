@@ -149,6 +149,29 @@ class SpscRing {
     return handled;
   }
 
+  // At most one message, stepping over padding inside the same call, so an arbiter visiting many
+  // rings interleaves them fairly rather than draining whichever it looked at first.
+  template <typename Handler>
+  std::size_t pollOne(Handler&& handler) {
+    const std::uint64_t capacity = header().capacity;
+    const std::uint64_t head = header().head.load(std::memory_order_acquire);
+    std::size_t handled = 0;
+    while (readPosition_ < head && handled == 0) {
+      const std::size_t at = readPosition_ & (capacity - 1);
+      std::uint32_t length = 0;
+      std::uint32_t kind = 0;
+      std::memcpy(&length, data() + at, sizeof length);
+      std::memcpy(&kind, data() + at + sizeof length, sizeof kind);
+      if (kind == MESSAGE) {
+        handler(data() + at + RECORD_HEADER, static_cast<std::size_t>(length));
+        handled++;
+      }
+      readPosition_ += aligned(RECORD_HEADER + length);
+    }
+    header().tail.store(readPosition_, std::memory_order_release);
+    return handled;
+  }
+
  private:
   static constexpr std::uint32_t MESSAGE = 0;
   static constexpr std::uint32_t PADDING = 1;

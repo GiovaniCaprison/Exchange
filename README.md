@@ -26,6 +26,12 @@ The matcher is the venue's hot core: one thread on one pinned core, consuming se
 from a ring, emitting events into another, allocating nothing after initialisation. Its design and
 its proofs live in `components/matcher/`.
 
+The sequencer is where the order is made: one thread arbitrating gateway submissions, giving each
+command its place in the sequence and the venue's one timestamp, journaling it, and publishing it
+to the ring and as ranges with heartbeats and rewind. Every downstream process reads the stream
+through the consumer library in `components/common/`, from the ring, the journal or the packet
+feed, behind one gap-free contract. Its design and its proofs live in `components/sequencer/`.
+
 ## Build
 
 Requires CMake and a C++23 compiler.
