@@ -86,14 +86,14 @@ class Slab {
 
   // A snapshot is a copy of the arrays, free list threading and all, so a restored slab is
   // bit-equal to the one that was saved and the suffix it produces is byte identical (P-2).
-  void save(ByteSink& sink) const {
+  void save(common::ByteSink& sink) const {
     sink.i32(capacity_);
     sink.i32(freeHead_);
     sink.span(hot_);
     sink.span(cold_);
   }
 
-  void restore(ByteSource& source) {
+  void restore(common::ByteSource& source) {
     capacity_ = source.i32();
     freeHead_ = source.i32();
     source.span(hot_);

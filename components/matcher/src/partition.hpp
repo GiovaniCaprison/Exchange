@@ -122,7 +122,7 @@ class Partition {
   // engine's state. A restore rebuilds the engines from their definitions and overwrites their
   // state, so a restored partition is bit-equal to the saved one and the suffix it produces is
   // byte identical (P-2).
-  void save(ByteSink& sink) const {
+  void save(common::ByteSink& sink) const {
     sink.u64(lastSequence_);
     sink.u64(counters_.nextOrderId);
     sink.u64(counters_.nextExecutionId);
@@ -144,7 +144,7 @@ class Partition {
     }
   }
 
-  void restore(ByteSource& source) {
+  void restore(common::ByteSource& source) {
     lastSequence_ = source.u64();
     counters_.nextOrderId = source.u64();
     counters_.nextExecutionId = source.u64();

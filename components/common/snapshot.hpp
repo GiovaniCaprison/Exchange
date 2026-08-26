@@ -16,7 +16,7 @@
 #include "crc32c.hpp"
 #include "exchange_protocol/NewOrder.h"
 
-namespace exchange::matcher {
+namespace exchange::common {
 
 namespace snapshot {
 
@@ -98,4 +98,4 @@ std::uint64_t restore(const std::string& path, Partition& partition) {
 
 }  // namespace snapshot
 
-}  // namespace exchange::matcher
+}  // namespace exchange::common

@@ -4,7 +4,7 @@
 
 add_library(exchange-matcher INTERFACE)
 target_include_directories(exchange-matcher INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(exchange-matcher INTERFACE exchange-protocol)
+target_link_libraries(exchange-matcher INTERFACE exchange-protocol exchange-common)
 
 add_library(matcher-test-harness STATIC test/harness.cpp)
 target_include_directories(matcher-test-harness PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/test)

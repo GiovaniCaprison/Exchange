@@ -12,6 +12,7 @@
 
 int main(const int count, char** values) {
   using namespace exchange::matcher;
+  namespace common = exchange::common;
   using namespace exchange::matcher::test;
   std::string journalPath;
   std::uint64_t commands = 100'000;
@@ -30,7 +31,7 @@ int main(const int count, char** values) {
     std::fprintf(stderr, "usage: flowgen --journal J [--commands N] [--seed S]\n");
     return 2;
   }
-  journal::Writer writer(journalPath);
+  common::journal::Writer writer(journalPath);
   for (const CommandWriter::Framed& framed : generatedFlow(seed, commands)) {
     writer.append(framed.bytes.data(), static_cast<std::uint32_t>(framed.bytes.size()));
   }

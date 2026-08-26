@@ -10,7 +10,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace exchange::matcher {
+namespace exchange::common {
 
 class ByteSink {
  public:
@@ -73,4 +73,4 @@ class ByteSource {
   const char* end_;
 };
 
-}  // namespace exchange::matcher
+}  // namespace exchange::common

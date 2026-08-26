@@ -20,6 +20,7 @@
 #include "snapshot.hpp"
 
 using namespace exchange::matcher;
+namespace common = exchange::common;
 using namespace exchange::matcher::test;
 
 namespace {
@@ -57,7 +58,7 @@ TEST_CASE("a snapshot mid-stream restores to a byte identical suffix") {
   CapturingRing wholeRing;
   Partition<CapturingRing> whole(wholeRing);
   std::size_t suffixStart = 0;
-  ByteSink saved;
+  common::ByteSink saved;
   for (std::size_t at = 0; at < flow.size(); at++) {
     std::vector<char> bytes = flow[at].bytes;
     whole.onCommand(bytes.data(), 0, bytes.size());
@@ -69,7 +70,7 @@ TEST_CASE("a snapshot mid-stream restores to a byte identical suffix") {
 
   CapturingRing restoredRing;
   Partition<CapturingRing> restored(restoredRing);
-  ByteSource source(saved.bytes().data(), saved.bytes().size());
+  common::ByteSource source(saved.bytes().data(), saved.bytes().size());
   restored.restore(source);
   CHECK(source.exhausted());
   for (std::size_t at = cut; at < flow.size(); at++) {
@@ -86,12 +87,12 @@ TEST_CASE("a journal replays to identical bytes and survives a torn tail") {
   const std::vector<CommandWriter::Framed> flow = generatedFlow(7, 2000);
   const std::filesystem::path path = scratch("journal.exj");
   {
-    journal::Writer writer(path.string());
+    common::journal::Writer writer(path.string());
     for (const CommandWriter::Framed& framed : flow) {
       writer.append(framed.bytes.data(), static_cast<std::uint32_t>(framed.bytes.size()));
     }
   }
-  journal::Read whole = journal::read(path.string());
+  common::journal::Read whole = common::journal::read(path.string());
   REQUIRE(whole.count() == flow.size());
 
   CapturingRing ring;
@@ -108,7 +109,7 @@ TEST_CASE("a journal replays to identical bytes and survives a torn tail") {
     out.write(reinterpret_cast<const char*>(&length), sizeof length);
     out.write("torn", 4);
   }
-  journal::Read torn = journal::read(path.string());
+  common::journal::Read torn = common::journal::read(path.string());
   CHECK(torn.count() == flow.size());
   std::filesystem::remove(path);
 }
@@ -117,7 +118,7 @@ TEST_CASE("the binary is killed at a sequence, restored, and held to the unbroke
   const std::vector<CommandWriter::Framed> flow = generatedFlow(31, 3000);
   const std::filesystem::path journalPath = scratch("binary.exj");
   {
-    journal::Writer writer(journalPath.string());
+    common::journal::Writer writer(journalPath.string());
     for (const CommandWriter::Framed& framed : flow) {
       writer.append(framed.bytes.data(), static_cast<std::uint32_t>(framed.bytes.size()));
     }

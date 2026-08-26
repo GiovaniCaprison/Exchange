@@ -71,6 +71,7 @@ void operator delete[](void* memory, std::size_t) noexcept { std::free(memory); 
 
 int main(const int count, char** values) {
   namespace matching = exchange::matcher;
+  namespace common = exchange::common;
   namespace sbe = exchange::protocol;
   std::string journalPath;
   bool misbehave = false;
@@ -87,7 +88,7 @@ int main(const int count, char** values) {
     return 2;
   }
 
-  matching::journal::Read log = matching::journal::read(journalPath);
+  common::journal::Read log = common::journal::read(journalPath);
   DiscardingRing ring;
   matching::Partition<DiscardingRing> partition(ring);
 

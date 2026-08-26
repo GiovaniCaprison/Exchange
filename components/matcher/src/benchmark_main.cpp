@@ -33,6 +33,7 @@
 namespace {
 
 namespace matching = exchange::matcher;
+namespace common = exchange::common;
 
 class DiscardingRing {
  public:
@@ -113,7 +114,7 @@ int main(const int count, char** values) {
   }
 
   const std::string isolation = pinned(core);
-  matching::journal::Read log = matching::journal::read(journalPath);
+  common::journal::Read log = common::journal::read(journalPath);
   if (log.count() <= warmup) {
     std::fprintf(stderr, "the journal holds %zu commands and the warmup wants %llu\n", log.count(),
                  static_cast<unsigned long long>(warmup));

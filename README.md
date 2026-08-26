@@ -14,7 +14,7 @@ the citation each decision stands on, is in [ARCHITECTURE.md](docs/ARCHITECTURE.
 ```
 docs/       the architecture, the principles, the protocol, and the component programme
 schema/     the SBE schema owning every message that crosses a process boundary
-components/ one directory per process
+components/ one directory per process, and common/ for the carriers they share
 corpus/     behavioural fixtures with their blessed events
 scripts/    measurement and analysis
 ```

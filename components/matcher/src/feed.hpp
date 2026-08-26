@@ -117,8 +117,8 @@ class Feed {
   void finish() { ring_.publish(); }
 
   // The feed's only durable state is its stream position; the per-command context is transient.
-  void save(ByteSink& sink) const { sink.u64(sequence_); }
-  void restore(ByteSource& source) { sequence_ = source.u64(); }
+  void save(common::ByteSink& sink) const { sink.u64(sequence_); }
+  void restore(common::ByteSource& source) { sequence_ = source.u64(); }
 
  private:
   // Claims space for one event, wraps its header, and stamps the event context: the partition's

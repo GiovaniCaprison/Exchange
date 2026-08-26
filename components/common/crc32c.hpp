@@ -8,7 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace exchange::matcher {
+namespace exchange::common {
 
 namespace detail {
 
@@ -37,4 +37,4 @@ inline std::uint32_t crc32c(const void* data, const std::size_t length) {
   return crc ^ 0xFFFFFFFFu;
 }
 
-}  // namespace exchange::matcher
+}  // namespace exchange::common
