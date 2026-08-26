@@ -226,7 +226,10 @@ published, from the floor the link's markers named, then continues sequencing on
 already holds. It inherits the dedupe windows it mirrored as the standby, so a gateway's
 resubmission of anything replicated is re-answered with the place the command already holds, and
 exactly-once survives the failover; the stitched stream across epochs is gap free and duplicate
-free, and the chaos suite holds it to that.
+free, and the chaos suite holds it to that. A total failure of both nodes ends the session: the
+journals hold the record, recovery is the next session started fresh, and gateways resynchronise
+at the boundary, which is the deployment real venues run; MoldUDP64's session name is that
+boundary made visible on the wire.
 
 ## The ring
 
