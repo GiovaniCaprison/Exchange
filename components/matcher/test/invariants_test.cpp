@@ -10,6 +10,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "harness.hpp"
@@ -187,7 +188,7 @@ void check(const Partition<CapturingRing>& partition, const ConsumerBook& rebuil
         forward.push_back(slot);
         shown += slab.hot(slot).displayed;
         left += slab.hot(slot).remaining;
-        CHECK(slab.cold(slot).side == side);
+        CHECK(std::cmp_equal(slab.cold(slot).side, side));
         CHECK(book.rankOf(side, slab.hot(slot).tick) == rank);
         queued++;
       }
@@ -226,6 +227,7 @@ void check(const Partition<CapturingRing>& partition, const ConsumerBook& rebuil
             [&slab](const std::int32_t left, const std::int32_t right) {
               return slab.hot(left).arrival < slab.hot(right).arrival;
             });
+  visible.reserve(visible.size() + byArrival.size());
   for (const std::int32_t slot : byArrival) {
     visible.push_back({slab.hot(slot).id, slab.cold(slot).side,
                        book.priceOfTick(slab.hot(slot).tick), slab.hot(slot).displayed});

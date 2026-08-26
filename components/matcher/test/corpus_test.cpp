@@ -101,7 +101,7 @@ std::string normalised(const std::string& line) {
 std::int64_t value(const std::vector<std::string>& words, const std::string& key,
                    const std::int64_t fallback) {
   for (const std::string& word : words) {
-    if (word.rfind(key + "=", 0) == 0) {
+    if (word.starts_with(key + "=")) {
       return std::stoll(word.substr(key.size() + 1));
     }
   }

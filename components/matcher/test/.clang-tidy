@@ -1,0 +1,5 @@
+# The tests inherit the root remit with one difference: they drive whole processes on purpose,
+# killing a matcher mid-session and restarting it is the determinism suite's job, so calling a
+# command processor here is the test and not a hazard. Nothing a user types reaches these calls.
+InheritParentConfig: true
+Checks: '-bugprone-command-processor'

@@ -16,9 +16,7 @@
 #include "crc32c.hpp"
 #include "exchange_protocol/NewOrder.h"
 
-namespace exchange::common {
-
-namespace snapshot {
+namespace exchange::common::snapshot {
 
 inline constexpr char MAGIC[8] = {'E', 'X', 'S', 'N', 'A', 'P', '0', '1'};
 inline constexpr std::uint32_t STATE_VERSION = 1;
@@ -96,6 +94,4 @@ std::uint64_t restore(const std::string& path, Partition& partition) {
   return upToSequence;
 }
 
-}  // namespace snapshot
-
-}  // namespace exchange::common
+}  // namespace exchange::common::snapshot

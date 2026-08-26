@@ -1,4 +1,5 @@
-# Every merge to main is gated on this: the build, the tests, and the pinned format sweep. What
+# Every merge to main is gated on this: the build, the tests, the pinned lint, and the pinned
+# format sweep. What
 # lands is what passed on a machine nobody's editor had prepared.
 name: ci
 
@@ -21,6 +22,12 @@ jobs:
       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure
+      # The linter at the pinned LLVM version, reading .clang-tidy and the compile database the
+      # configure step wrote, so the runner, a laptop and an editor's clangd agree on every
+      # finding. Sources only: headers are checked through their includers via HeaderFilterRegex.
+      - run: |
+          git ls-files '*.cpp' \
+            | xargs pipx run clang-tidy==$(cat .clang-format-version) -p build --quiet
 
   format:
     runs-on: ubuntu-latest
