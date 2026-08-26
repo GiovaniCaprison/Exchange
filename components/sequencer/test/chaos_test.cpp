@@ -390,8 +390,8 @@ TEST_CASE("a packet lost across the failover boundary is rewound from the surviv
     CapturingRing standbyAcks;
     common::journal::Writer standbyJournal(standbyPath.string());
     Standby<CapturingRing, common::journal::Writer> standby(standbyJournal, standbyAcks, 1);
-    for (std::size_t at = 0; at < flow.size(); at++) {
-      std::vector<char> record = gateways[0].submit(flow[at].bytes);
+    for (const CommandWriter::Framed& framed : flow) {
+      std::vector<char> record = gateways[0].submit(framed.bytes);
       old.sequencer.onSubmission(record.data(), record.size());
     }
     for (std::vector<char>& range : old.link.ranges) {
