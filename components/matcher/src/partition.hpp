@@ -95,8 +95,7 @@ class Partition {
         break;
       }
       default:
-        throw std::invalid_argument("template " + std::to_string(header.templateId()) +
-                                    " is not a command (P-9)");
+        refuseTemplate(header.templateId());
     }
     feed_.finish();
   }
@@ -212,6 +211,18 @@ class Partition {
         return *engines_[at];
       }
     }
+    refuseInstrument(instrumentId);
+  }
+
+  // The refusals live out of line on purpose: building a message is string machinery the
+  // instruction cache should never hold inside the hot function, and the codegen ritual is what
+  // caught it living there.
+  [[noreturn]] [[gnu::noinline]] static void refuseTemplate(const std::uint16_t templateId) {
+    throw std::invalid_argument("template " + std::to_string(templateId) +
+                                " is not a command (P-9)");
+  }
+
+  [[noreturn]] [[gnu::noinline]] static void refuseInstrument(const std::uint32_t instrumentId) {
     throw std::invalid_argument("instrument " + std::to_string(instrumentId) + " is not defined");
   }
 
