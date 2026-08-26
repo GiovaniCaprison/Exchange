@@ -200,8 +200,12 @@ loss; a count of 65535 is end of session. The shape follows MoldUDP64 (Nasdaq, p
 place of the session name. A consumer that misses packets asks the rewinder with RewindRequest,
 naming a first sequence and a count, and receives ordinary ranges from the journal.
 
-Replication is the same ranges over a private link, acknowledged by ReplicationAck naming the
-epoch and the highest contiguous sequence held. Two durability policies exist and every
+Replication is the same ranges over a private link, each message a whole submission, envelope
+and stamped command together, because the standby mirrors the dedupe windows from the envelopes;
+its journal stores the command alone, so the two journals stay byte identical. Ranges are
+acknowledged by ReplicationAck naming the epoch and the highest contiguous sequence held, one
+acknowledgment per range, and the link's empty ranges carry the published watermark, which is the
+floor a takeover republishes from. Two durability policies exist and every
 measurement's manifest names the one it ran under: safe, where the primary publishes a command
 only after the standby's acknowledgment covers it, and local, where publication follows the
 journal write alone. Under the safe policy the invariant that failover rests on holds by
@@ -218,8 +222,11 @@ names the holder, the epoch and the remaining time. The witness grants a higher 
 the standing lease has expired, so a live primary cannot be usurped, and an expired primary must
 stop publishing before its lease can be granted away, which is what makes the handover safe. A
 standby that wins epoch E+1 first publishes any replicated suffix the old primary never
-published, then continues sequencing; the stitched stream across epochs is gap free and duplicate
-free, and the determinism suite holds it to that.
+published, from the floor the link's markers named, then continues sequencing on the journal it
+already holds. It inherits the dedupe windows it mirrored as the standby, so a gateway's
+resubmission of anything replicated is re-answered with the place the command already holds, and
+exactly-once survives the failover; the stitched stream across epochs is gap free and duplicate
+free, and the chaos suite holds it to that.
 
 ## The ring
 

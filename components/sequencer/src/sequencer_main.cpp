@@ -10,6 +10,7 @@
 //   sequencer --in R1,R2,... --acks A1,A2,... --out RING --journal J [--udp HOST:PORT]
 //             [--policy local|safe --replicate RING --replicate-acks RING]
 //   sequencer --standby-in RING --standby-acks RING --journal J
+//   sequencer --witness --lease-requests R1,R2 --lease-responses S1,S2 [--ttl-ms N]
 //
 // In live mode the sequencer visits the gateway rings round robin, one record per visit, so no
 // gateway's burst starves another; a sweep that sequenced something flushes one packet, and a
@@ -33,8 +34,11 @@
 
 #include "clock.hpp"
 #include "exchange_protocol/GatewaySubmission.h"
+#include "exchange_protocol/LeaseRequest.h"
+#include "exchange_protocol/LeaseResponse.h"
 #include "exchange_protocol/MessageHeader.h"
 #include "journal.hpp"
+#include "leadership.hpp"
 #include "loopback.hpp"
 #include "sequencer.hpp"
 #include "spsc_ring.hpp"
@@ -353,6 +357,57 @@ int live(const std::string& inList, const std::string& ackList, const std::strin
   return liveLoop(ins, acks, out, journal, packets, link, sequencing::Durability::LOCAL, nullptr);
 }
 
+// The witness process: one request ring and one response ring per node, the lease law applied
+// on the wall clock. It holds no venue state, which is the point: three small processes decide
+// leadership so that two big ones cannot both hold it.
+int witnessMode(const std::string& requestList, const std::string& responseList,
+                const std::uint64_t ttlNanoseconds) {
+  const std::vector<std::string> requestPaths = split(requestList);
+  const std::vector<std::string> responsePaths = split(responseList);
+  if (requestPaths.size() != responsePaths.size()) {
+    std::fprintf(stderr, "every request ring needs its response ring\n");
+    return 2;
+  }
+  std::vector<common::SpscRing> requests;
+  std::vector<common::SpscRing> responses;
+  requests.reserve(requestPaths.size());
+  responses.reserve(responsePaths.size());
+  for (const std::string& path : responsePaths) {
+    responses.push_back(common::SpscRing::create(path, 1 << 16));
+  }
+  for (const std::string& path : requestPaths) {
+    requests.push_back(common::SpscRing::attach(path));
+  }
+  sequencing::WallClock clock;
+  sequencing::Witness<sequencing::WallClock> witness(clock, ttlNanoseconds);
+  constexpr std::size_t RESPONSE_BYTES =
+      sbe::MessageHeader::encodedLength() + sbe::LeaseResponse::sbeBlockLength();
+  std::signal(SIGINT, onSignal);
+  std::signal(SIGTERM, onSignal);
+  while (stopped == 0) {
+    for (std::size_t node = 0; node < requests.size(); node++) {
+      requests[node].pollOne([&](char* message, const std::size_t length) {
+        sbe::MessageHeader wrap;
+        wrap.wrap(message, 0, 0, length);
+        sbe::LeaseRequest request;
+        request.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
+                              length);
+        const auto answer =
+            witness.onRequest(request.nodeId(), request.epoch(), request.lastSequence());
+        common::SpscRing& out = responses[node];
+        const std::size_t at = out.claim(RESPONSE_BYTES);
+        sbe::LeaseResponse response;
+        response.wrapAndApplyHeader(out.buffer(), at, at + RESPONSE_BYTES);
+        response.ttl(answer.ttl).epoch(answer.epoch).holder(answer.holder);
+        response.granted(answer.granted ? 1 : 0);
+        out.commit();
+        out.publish();
+      });
+    }
+  }
+  return 0;
+}
+
 int standbyMode(const std::string& inPath, const std::string& acksPath,
                 const std::string& journalPath) {
   common::SpscRing in = common::SpscRing::attach(inPath);
@@ -380,12 +435,19 @@ int main(const int count, char** values) {
   const std::string policy = argument(count, values, "--policy");
   const std::string standbyIn = argument(count, values, "--standby-in");
   const std::string standbyAcks = argument(count, values, "--standby-acks");
+  const std::string leaseRequests = argument(count, values, "--lease-requests");
+  const std::string leaseResponses = argument(count, values, "--lease-responses");
   const bool safe = policy == "safe";
   if (!policy.empty() && policy != "safe" && policy != "local") {
     std::fprintf(stderr, "policy must be local or safe\n");
     return 2;
   }
 
+  if (flagged(count, values, "--witness") && !leaseRequests.empty() && !leaseResponses.empty()) {
+    const std::string ttl = argument(count, values, "--ttl-ms");
+    return witnessMode(leaseRequests, leaseResponses,
+                       (ttl.empty() ? 100 : std::stoull(ttl)) * 1'000'000ULL);
+  }
   if (!standbyIn.empty() && !standbyAcks.empty() && !journalPath.empty()) {
     return standbyMode(standbyIn, standbyAcks, journalPath);
   }
@@ -404,6 +466,8 @@ int main(const int count, char** values) {
                " [--policy local|safe] [--standby-journal SJ] [--end-session]\n"
                "       sequencer --in R1,R2 --acks A1,A2 --out RING --journal J"
                " [--udp HOST:PORT] [--policy safe --replicate RING --replicate-acks RING]\n"
-               "       sequencer --standby-in RING --standby-acks RING --journal J\n");
+               "       sequencer --standby-in RING --standby-acks RING --journal J\n"
+               "       sequencer --witness --lease-requests R1,R2 --lease-responses S1,S2"
+               " [--ttl-ms N]\n");
   return 2;
 }

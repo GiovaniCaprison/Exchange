@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -26,16 +27,22 @@ inline std::size_t padded(const std::size_t length) { return (length + 7) & ~std
 
 class Writer {
  public:
-  explicit Writer(const std::string& path) {
-    file_ = std::fopen(path.c_str(), "wb");
+  // Appending continues an existing journal past its sound bytes, which is how a standby's file
+  // becomes the new primary's without a copy; a fresh path gets the header either way.
+  explicit Writer(const std::string& path, const bool append = false) {
+    const bool exists =
+        append && std::filesystem::exists(path) && std::filesystem::file_size(path) >= sizeof MAGIC;
+    file_ = std::fopen(path.c_str(), exists ? "ab" : "wb");
     if (file_ == nullptr) {
       throw std::runtime_error("cannot open journal " + path);
     }
-    std::fwrite(MAGIC, 1, sizeof MAGIC, file_);
-    const std::uint32_t schemaId = ::exchange::protocol::NewOrder::sbeSchemaId();
-    const std::uint32_t schemaVersion = ::exchange::protocol::NewOrder::sbeSchemaVersion();
-    std::fwrite(&schemaId, sizeof schemaId, 1, file_);
-    std::fwrite(&schemaVersion, sizeof schemaVersion, 1, file_);
+    if (!exists) {
+      std::fwrite(MAGIC, 1, sizeof MAGIC, file_);
+      const std::uint32_t schemaId = ::exchange::protocol::NewOrder::sbeSchemaId();
+      const std::uint32_t schemaVersion = ::exchange::protocol::NewOrder::sbeSchemaVersion();
+      std::fwrite(&schemaId, sizeof schemaId, 1, file_);
+      std::fwrite(&schemaVersion, sizeof schemaVersion, 1, file_);
+    }
   }
 
   ~Writer() { close(); }
