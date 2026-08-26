@@ -50,6 +50,12 @@ add_library(exchange-protocol INTERFACE)
 add_dependencies(exchange-protocol exchange-protocol-codecs)
 target_include_directories(exchange-protocol INTERFACE ${GENERATED})
 
+# The codecs' bounds checks leave the release build: input below a process's boundary arrives
+# well framed by contract (ARCHITECTURE.md, what a process may assume), so re-checking it per
+# field is a branch the hot path does not owe. The debug and sanitizer flavours keep the checks,
+# which makes trust a build type rather than a hope.
+target_compile_definitions(exchange-protocol INTERFACE $<$<CONFIG:Release>:SBE_NO_BOUNDS_CHECK>)
+
 # The round trip: every message encoded through its generated encoder and read back through its
 # decoder, so the schema, the contexts and the field layout in docs/PROTOCOL.md are held to each
 # other by a test rather than by attention.
