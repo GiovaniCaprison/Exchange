@@ -22,6 +22,7 @@ target_link_libraries(matcher-attribution PRIVATE matcher-test-harness Catch2::C
 # The process itself: rings in and out, a journal, snapshots, and replay as the recovery path.
 add_executable(matcher src/matcher_main.cpp)
 target_link_libraries(matcher PRIVATE exchange-matcher)
+exchange_measured(matcher)
 
 add_executable(matcher-determinism test/determinism_test.cpp)
 target_link_libraries(matcher-determinism PRIVATE matcher-test-harness Catch2::Catch2WithMain)
@@ -48,6 +49,7 @@ target_link_libraries(flowgen PRIVATE matcher-test-harness)
 
 add_executable(matcher-benchmark src/benchmark_main.cpp)
 target_link_libraries(matcher-benchmark PRIVATE exchange-matcher)
+exchange_measured(matcher-benchmark)
 
 catch_discover_tests(matcher-corpus)
 catch_discover_tests(matcher-invariants)

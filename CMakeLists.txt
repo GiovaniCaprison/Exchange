@@ -31,6 +31,30 @@ if(EXCHANGE_SANITIZE)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
+# The campaign's flavours (docs/PRACTICE.md): link time optimisation and profile guidance on
+# the measured binaries, with the whole build recorded into every manifest they write, so a
+# number's toolchain is never a guess. Flags follow gcc's spelling with the one gcc-only flag
+# guarded, since the box builds with either compiler.
+option(EXCHANGE_LTO "link time optimisation for the measured binaries" OFF)
+set(EXCHANGE_PGO "" CACHE STRING "profile guided optimisation: empty, generate, or use")
+function(exchange_measured target)
+  if(EXCHANGE_LTO)
+    set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+  endif()
+  if(EXCHANGE_PGO STREQUAL "generate")
+    target_compile_options(${target} PRIVATE -fprofile-generate)
+    target_link_options(${target} PRIVATE -fprofile-generate)
+  elseif(EXCHANGE_PGO STREQUAL "use")
+    target_compile_options(${target} PRIVATE -fprofile-use)
+    target_link_options(${target} PRIVATE -fprofile-use)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+      target_compile_options(${target} PRIVATE -fprofile-correction)
+    endif()
+  endif()
+  target_compile_definitions(${target} PRIVATE
+    EXCHANGE_BUILD_FLAGS="${CMAKE_BUILD_TYPE} LTO=${EXCHANGE_LTO} PGO=${EXCHANGE_PGO} CXXFLAGS=${CMAKE_CXX_FLAGS}")
+endfunction()
+
 # Points git at the committed hooks on the first configure, so formatting on commit installs
 # itself for anyone who builds. Git never activates hooks from a clone on its own, which is a
 # security decision and not an omission, so some build has to do this once.

@@ -30,6 +30,10 @@
 #include "journal.hpp"
 #include "partition.hpp"
 
+#ifndef EXCHANGE_BUILD_FLAGS
+#define EXCHANGE_BUILD_FLAGS "unrecorded"
+#endif
+
 namespace {
 
 namespace matching = exchange::matcher;
@@ -153,6 +157,7 @@ int main(const int count, char** values) {
              << "  \"warmup\": " << warmup << ",\n"
              << "  \"events\": " << ring.events() << ",\n"
              << "  \"isolation\": \"" << isolation << "\",\n"
+             << "  \"build\": \"" << EXCHANGE_BUILD_FLAGS << "\",\n"
              << "  \"system\": \"" << machine.sysname << " " << machine.release << " "
              << machine.machine << "\",\n"
              << "  \"compiler\": \"" <<
