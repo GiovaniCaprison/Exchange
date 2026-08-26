@@ -1,0 +1,209 @@
+# Protocol
+
+What crosses a process boundary. One SBE schema in `schema/` owns every message here (FIX Trading
+Community, Simple Binary Encoding specification); this document is the contract the schema
+implements and the semantics the matcher answers to. The command vocabulary follows the
+conventions of OUCH (Nasdaq, public specification) and iLink 3 (CME Group, public documentation);
+the event stream follows the convention of TotalView-ITCH (Nasdaq, public specification), extended
+with the attribution fields a private stream needs.
+
+## Framing and alignment
+
+Every message begins with the standard SBE header: blockLength u16, templateId u16, schemaId u16,
+version u16, eight bytes. Rings, the journal and every other carrier place messages at eight byte
+boundaries, and the field layouts below keep every 64 bit field on an eight byte boundary from
+there. Fields are ordered for decode cost and alignment rather than for prose: wider fields first,
+the fields a consumer reads earliest nearest the front.
+
+## The command context
+
+Every command opens with the same 24 byte composite, written by the sequencer:
+
+| Field | Type | Meaning |
+|---|---|---|
+| sequence | u64 | the command's place in the global order, assigned exactly once |
+| timestamp | u64 | nanoseconds since the epoch, stamped by the sequencer at sequencing (P-3) |
+| instrumentId | u32 | which book the command addresses |
+| reserved | u32 | alignment padding, always zero |
+
+The matcher trusts the context (P-9's boundary sits above it): sequence is gap free within the
+partition's subscription, the timestamp is the venue's one clock reading for this command, and the
+instrument routes to a book this partition owns.
+
+## The event context
+
+Every event opens with the same 32 byte composite, written by the matcher:
+
+| Field | Type | Meaning |
+|---|---|---|
+| sequence | u64 | the event's place in this partition's event stream, gap free from 1 |
+| inputSequence | u64 | the sequence of the command this event answers |
+| timestamp | u64 | the answered command's timestamp, carried unchanged (P-3) |
+| instrumentId | u32 | which book the event describes |
+| reserved | u32 | alignment padding, always zero |
+
+Carrying the input sequence prices eight bytes and a store per event, and buys attribution:
+execution reports, drop copy and surveillance all need to know which command an event answers, and
+a gateway acknowledges its clients by matching input sequences. The public feed derivation strips
+the field, so the public convention stays ITCH-shaped. Carrying the timestamp rather than stamping
+again is what keeps replay byte exact (P-2, P-3).
+
+## Commands
+
+| Message | Body after the context | Notes |
+|---|---|---|
+| InstrumentDefinition | tickSize i64, lotSize i64, minPrice i64, maxPrice i64, bandWidth i64, openingReference i64, priceScale u8, allocation Allocation | precedes every other command for its instrument; trusted reference data |
+| NewOrder | clientOrderId u64, price i64, quantity i64, minQuantity i64, displayQuantity i64, triggerPrice i64, smpId u64, participantId u32, side Side, pricing Pricing, timeInForce TimeInForce, flags OrderFlags | the four qualifiers are absent when zero |
+| CancelOrder | clientOrderId u64, participantId u32 | names the order by the id its owner gave it |
+| ReplaceOrder | clientOrderId u64, quantity i64, price i64, participantId u32 | carries full intent rather than a delta |
+| MassCancel | clientOrderId u64, participantId u32 | removes everything the participant has resting or waiting |
+| SessionControl | state SessionState | the trading state moves on this command and on nothing else |
+
+Commands name orders by the pair (participantId, clientOrderId), unique per participant for the
+session and the sender's to keep unique. A client can cancel the moment it decides to, without
+waiting to learn any engine assigned id, and a recorded command stream replays without knowing
+what any engine did with it.
+
+## Events
+
+| Message | Body after the context | Meaning |
+|---|---|---|
+| OrderAccepted | orderId u64, clientOrderId u64, participantId u32 | admitted, with its engine order id |
+| OrderRejected | clientOrderId u64, participantId u32, reason RejectReason | refused, and no state changed |
+| OrderRested | orderId u64, price i64, quantity i64, side Side | entered the book; quantity is displayed quantity only |
+| OrderExecuted | executionId u64, aggressorOrderId u64, restingOrderId u64, price i64, quantity i64 | one execution, at the resting order's price |
+| OrderReduced | orderId u64, quantity i64 | new displayed quantity, queue position kept |
+| OrderRemoved | orderId u64, quantity i64, reason RemoveReason | left the book, with the quantity removed |
+| OrderTriggered | orderId u64 | a stop's condition was met and it left the trigger book |
+| SessionStateChanged | state SessionState | the state now in effect |
+| AuctionIndicative | price i64, quantity i64 | uncrossing price and volume if the auction ran now |
+
+Hidden quantity is never reported: what rests, reduces and removes is displayed quantity, and a
+consumer's book is the visible book. Engine order ids and execution ids are assigned from
+per-partition counters, unique within the partition for the session. Applying any prefix of the
+event stream yields a valid book, so a consumer applies events one at a time and is never asked to
+hold one back.
+
+## Enumerations
+
+| Enum | Values |
+|---|---|
+| Side | BUY 0, SELL 1 |
+| Pricing | LIMIT 0, MARKET 1 |
+| TimeInForce | GOOD_TILL_CANCEL 0, DAY 1, IMMEDIATE_OR_CANCEL 2, FILL_OR_KILL 3 |
+| OrderFlags | bit 0 postOnly |
+| Allocation | PRICE_TIME 0, PRO_RATA 1 |
+| SessionState | PRE_OPEN 0, OPENING_AUCTION 1, CONTINUOUS 2, CLOSING_AUCTION 3, HALTED 4, CLOSED 5 |
+| RejectReason | NON_POSITIVE_QUANTITY 0, LOT_VIOLATION 1, NON_POSITIVE_PRICE 2, TICK_VIOLATION 3, STATIC_BAND_VIOLATION 4, DYNAMIC_BAND_VIOLATION 5, INVALID_FIELDS 6, MINIMUM_QUANTITY_ABOVE_ORDER 7, DISPLAY_QUANTITY_ABOVE_ORDER 8, MINIMUM_QUANTITY_NOT_MET 9, WOULD_CROSS 10, FILL_OR_KILL_UNFILLABLE 11, STATE_NOT_PERMITTED 12, UNKNOWN_ORDER 13, QUANTITY_BELOW_EXECUTED 14 |
+| RemoveReason | CANCELLED 0, REPLACED 1, MASS_CANCELLED 2, IMMEDIATE_OR_CANCEL_REMAINDER 3, SELF_MATCH_PREVENTED 4 |
+
+## Order semantics
+
+Prices and quantities are scaled integers (P-11); priceScale on the instrument names the implied
+decimal places. A limit order's unmatched remainder rests at its price under GOOD_TILL_CANCEL or
+DAY; an IMMEDIATE_OR_CANCEL remainder is removed; a FILL_OR_KILL order executes in full on entry
+or is refused whole; a market order never rests. A post-only order never takes liquidity and is
+refused if it would. An order carrying minQuantity executes at least that much on entry or is
+refused without executing.
+
+An order with displayQuantity below quantity is an iceberg: only the displayed tranche rests
+visibly, displayed quantity at a price is consumed before hidden, and when a tranche is exhausted
+with quantity remaining the next tranche is displayed and joins the back of the queue at its
+price. What an order displays is a tranche of what it has left, and a replace preserves the
+display size it was entered with.
+
+An order with a non-zero triggerPrice is a stop of whichever pricing it carries. It rests in the
+trigger book, is not book liquidity, and fires when the last executed price reaches its trigger in
+the direction its side implies; a stop whose trigger the last executed price has already reached
+fires at once. A fired stop enters the book as an ordinary order of its pricing, triggers are
+evaluated after each command's executions, and a cascade runs to completion before the next
+command is applied.
+
+Orders sharing a non-zero smpId never execute against each other: the resting order is removed
+with SELF_MATCH_PREVENTED and the walk continues.
+
+## Matching
+
+Resting liquidity is consumed best price first, and an execution happens at the resting order's
+price. Within a price, allocation follows the instrument: PRICE_TIME consumes in arrival order;
+PRO_RATA apportions in proportion to displayed quantity, rounded down to a whole lot, with the
+undistributed remainder allocated in arrival order one lot at a time. An order whose remainder
+rests joins the queue behind everything that joined while it was matching, including tranches
+other icebergs replenished on the way.
+
+## Amend and cancel
+
+A replace names the order's whole intended quantity, so what should still be working is that
+quantity less what has already executed, and a replace naming a quantity at or below what has
+executed is refused. A replace lowering quantity at the same price keeps queue position and is
+reported as a reduction; any other replace is a removal and a fresh rest, keeping both of the
+order's ids. A replace refused for any reason, a liquidity flag included, leaves the original
+order resting untouched. A mass cancel removes every resting order and waiting stop the
+participant has, reported in arrival order.
+
+## Trading state and auctions
+
+The state moves only on SessionControl. Order entry, replacement and cancellation are legal in
+every state except CLOSED; continuous matching happens only in CONTINUOUS; until a state command
+arrives the engine is in PRE_OPEN. During a call phase an indicative uncrossing price and volume
+are reported whenever they change. Leaving a call phase uncrosses before the new state is
+reported: the auction executes all matched quantity at the one price that maximises executable
+volume, breaking ties by minimum surplus, then by the side the surplus sits on (unfilled demand
+settles high, unfilled supply settles low), then by proximity to the reference price, and finally
+by taking the higher price. Hidden quantity counts toward uncrossing volume and is displayed
+before it executes, in an auction as in continuous trading. A halt cancels nothing and the book is
+intact on resumption.
+
+The reference price is the last price executed in the session, and before the first execution it
+is the instrument's openingReference. The dynamic band is bandWidth either side of the reference;
+the static band is minPrice to maxPrice; a priced order satisfies both. A trigger price satisfies
+tick and the static band and is exempt from the dynamic band, since a stop is placed away from
+where the market is.
+
+## Validation and refusal precedence
+
+Validation happens once, before any state is touched (P-9), and the checks run cheapest first.
+The precedence is part of this contract: state permission, then quantity positive, on lot,
+minQuantity and displayQuantity no larger than quantity, field consistency (a market order cannot
+be told to rest, post-only cannot be paired with an immediate time in force), then price positive,
+on tick, inside the static band, inside the dynamic band, then trigger price checks, and last the
+checks that read the book: post-only crossing, FILL_OR_KILL fillability, minQuantity fillability.
+A refusal reports the first failing check's reason and changes nothing.
+
+## The journal
+
+The sequencer's journal is the append-only record of the sequenced command stream, and a matcher
+keeps the same format for the stream it consumed. A journal file is:
+
+| Part | Layout |
+|---|---|
+| header | magic "EXJRNL01" (8 bytes), schemaId u32, schemaVersion u32 |
+| record, repeated | length u32, one framed message of that length, crc u32 (CRC32C of the message bytes) |
+
+Records are eight byte aligned by padding after the crc; the pad bytes are zero. Recovery reads
+records until the file ends or a record is torn (short, or failing its crc), truncates the torn
+tail, and verifies that command sequences are contiguous. A torn tail is the expected result of a
+process dying mid-append and is repaired by truncation rather than guesswork.
+
+## Snapshots
+
+A snapshot is the full state of one matcher partition as a versioned blob, so recovery is snapshot
+plus journal suffix rather than a full replay. A snapshot file is:
+
+| Part | Layout |
+|---|---|
+| header | magic "EXSNAP01" (8 bytes), schemaId u32, schemaVersion u32, stateVersion u32, reserved u32, upToSequence u64, stateLength u64 |
+| state | stateLength bytes, the partition state at stateVersion |
+| trailer | crc u32 (CRC32C of the state bytes) |
+
+upToSequence names the last command the snapshot includes. Restoring the snapshot and replaying
+the journal from upToSequence + 1 produces an event stream byte identical to the run that never
+stopped, and the determinism suite proves exactly that. The state layout is versioned by
+stateVersion and documented beside the matcher that writes it.
+
+## Determinism rules
+
+Every process behind the sequencer obeys these, and the determinism suite enforces them: no clock
+reads, no randomness, no iteration over anything without a defined order, no behaviour depending
+on addresses, thread timing or environment. The same sequenced input produces byte identical
+output, always (P-2).

@@ -1,0 +1,6 @@
+# Google style at a hundred columns. The version is pinned in .clang-format-version, so the hook,
+# the workflow and every machine wrap alike.
+BasedOnStyle: Google
+ColumnLimit: 100
+DerivePointerAlignment: false
+PointerAlignment: Left
