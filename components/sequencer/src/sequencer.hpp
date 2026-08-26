@@ -237,26 +237,30 @@ class Sequencer {
   // One submission to the standby as a one-message range, envelope and stamped command
   // together, shipped the moment it is sequenced so the link pipelines instead of waiting on
   // batches. The envelope rides along because the standby mirrors the dedupe windows from it,
-  // which is what a takeover inherits (docs/PROTOCOL.md, leadership).
+  // which is what a takeover inherits (docs/PROTOCOL.md, leadership). The range is built in the
+  // link's claimed space directly: a bounce buffer would be a second copy and a stack canary in
+  // the hot function, and the codegen ritual is what caught both.
   void ship(const std::uint64_t sequence, const char* record, const std::size_t length) {
-    char range[common::ranges::PACKET_BYTES];
-    common::ranges::Builder builder(range, sizeof range);
+    const std::size_t built = common::ranges::headerBytes() + sizeof(std::uint16_t) + length;
+    const std::size_t at = link_.claim(built);
+    common::ranges::Builder builder(link_.buffer() + at, built);
     builder.open(sequence, epoch_);
     builder.add(record, static_cast<std::uint16_t>(length));
-    const std::size_t built = builder.close();
-    const std::size_t at = link_.claim(built);
-    std::memcpy(link_.buffer() + at, range, built);
+    builder.close();
     link_.commit();
     link_.publish();
   }
 
   void shipMarker(const std::uint64_t firstSequence, const bool end) {
-    char range[common::ranges::PACKET_BYTES];
-    common::ranges::Builder builder(range, sizeof range);
-    builder.open(firstSequence, epoch_);
-    const std::size_t built = end ? builder.closeEndOfSession() : builder.close();
+    const std::size_t built = common::ranges::headerBytes();
     const std::size_t at = link_.claim(built);
-    std::memcpy(link_.buffer() + at, range, built);
+    common::ranges::Builder builder(link_.buffer() + at, built);
+    builder.open(firstSequence, epoch_);
+    if (end) {
+      builder.closeEndOfSession();
+    } else {
+      builder.close();
+    }
     link_.commit();
     link_.publish();
   }
