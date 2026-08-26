@@ -44,8 +44,8 @@ the format is part of the build rather than a habit.
 ## Conventions
 
 Commit messages read `(category): what I am actually doing`. Branches are one change each and land
-through a pull request, and every merge to main is gated on green checks: build, tests, and the
-pinned format sweep.
+through a pull request, and every merge to main is gated on green checks: build, tests, the
+sanitizer battery, and the pinned format sweep.
 
 Prices and quantities are scaled integers everywhere, nothing on a hot path allocates after
 initialisation, no process behind the sequencer reads a clock, and every claim about behaviour or

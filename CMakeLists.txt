@@ -19,6 +19,18 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
+# The sanitizer flavour: address and undefined behaviour checking over the whole battery, run in
+# ci beside the release build. Undefined behaviour is the bug class the optimiser is licensed to
+# assume away, so it is hunted by a build whose only job is to see it. Recovery is off so a
+# finding is an exit code, and the flags go on before the test framework is fetched because a
+# sanitized binary must be sanitized all the way down.
+option(EXCHANGE_SANITIZE "address and undefined behaviour sanitizers on every target" OFF)
+if(EXCHANGE_SANITIZE)
+  add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all
+                      -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
 # Points git at the committed hooks on the first configure, so formatting on commit installs
 # itself for anyone who builds. Git never activates hooks from a clone on its own, which is a
 # security decision and not an omission, so some build has to do this once.

@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/louisgrennell/Exchange/build-sanitize/_deps/catch2-subbuild/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

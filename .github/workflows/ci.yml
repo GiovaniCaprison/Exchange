@@ -1,6 +1,6 @@
-# Every merge to main is gated on this: the build, the tests, the pinned lint, and the pinned
-# format sweep. What
-# lands is what passed on a machine nobody's editor had prepared.
+# Every merge to main is gated on this: the build, the tests, the pinned lint, the sanitizer
+# battery, and the pinned format sweep. What lands is what passed on a machine nobody's editor
+# had prepared.
 name: ci
 
 on:
@@ -28,6 +28,17 @@ jobs:
       - run: |
           git ls-files '*.cpp' \
             | xargs pipx run clang-tidy==$(cat .clang-format-version) -p build --quiet
+
+  # The same battery under address and undefined behaviour sanitizers, in debug so line numbers
+  # survive. The release job proves the code fast; this one proves the speed rests on defined
+  # behaviour rather than on undefined behaviour the optimiser happened to forgive.
+  sanitize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -B build-sanitize -DCMAKE_BUILD_TYPE=Debug -DEXCHANGE_SANITIZE=ON
+      - run: cmake --build build-sanitize
+      - run: ctest --test-dir build-sanitize --output-on-failure
 
   format:
     runs-on: ubuntu-latest

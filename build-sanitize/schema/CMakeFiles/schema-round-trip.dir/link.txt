@@ -1,0 +1,1 @@
+/usr/bin/c++ -g -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names -fsanitize=address,undefined "CMakeFiles/schema-round-trip.dir/round_trip_test.cpp.o" -o schema-round-trip  ../_deps/catch2-build/src/libCatch2Maind.a ../_deps/catch2-build/src/libCatch2d.a

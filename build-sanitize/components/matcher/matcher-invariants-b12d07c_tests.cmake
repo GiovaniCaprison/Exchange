@@ -1,0 +1,5 @@
+add_test( [==[nothing drifts across generated continuous flow]==] /Users/louisgrennell/Exchange/build-sanitize/components/matcher/matcher-invariants [==[nothing drifts across generated continuous flow]==]  )
+set_tests_properties( [==[nothing drifts across generated continuous flow]==] PROPERTIES WORKING_DIRECTORY /Users/louisgrennell/Exchange/build-sanitize/components/matcher SKIP_RETURN_CODE 4)
+add_test( [==[nothing drifts across generated flow with call phases]==] /Users/louisgrennell/Exchange/build-sanitize/components/matcher/matcher-invariants [==[nothing drifts across generated flow with call phases]==]  )
+set_tests_properties( [==[nothing drifts across generated flow with call phases]==] PROPERTIES WORKING_DIRECTORY /Users/louisgrennell/Exchange/build-sanitize/components/matcher SKIP_RETURN_CODE 4)
+set( matcher-invariants_TESTS [==[nothing drifts across generated continuous flow]==] [==[nothing drifts across generated flow with call phases]==])
