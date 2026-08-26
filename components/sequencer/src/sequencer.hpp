@@ -24,6 +24,7 @@
 #include "exchange_protocol/CommandSequenced.h"
 #include "exchange_protocol/GatewaySubmission.h"
 #include "exchange_protocol/MessageHeader.h"
+#include "leadership.hpp"
 #include "ranges.hpp"
 
 namespace exchange::sequencer {
@@ -73,7 +74,7 @@ class Sequencer {
         epoch_(epoch),
         builder_(packet_, sizeof packet_) {
     gateways_.resize(acks.size());
-    for (Gateway& gateway : gateways_) {
+    for (GatewayState& gateway : gateways_) {
       gateway.key.assign(WINDOW, 0);
       gateway.sequence.assign(WINDOW, 0);
       gateway.timestamp.assign(WINDOW, 0);
@@ -100,7 +101,7 @@ class Sequencer {
       violations_++;
       return;
     }
-    Gateway& gateway = gateways_[gatewayId];
+    GatewayState& gateway = gateways_[gatewayId];
 
     if (gatewaySequence == gateway.nextExpected) {
       char* command = bytes + SUBMISSION_BYTES;
@@ -113,7 +114,7 @@ class Sequencer {
       std::memcpy(command + context, &sequence_, sizeof sequence_);
       std::memcpy(command + context + sizeof sequence_, &timestamp, sizeof timestamp);
       journal_.append(command, static_cast<std::uint32_t>(commandLength));
-      ship(sequence_, command, commandLength);
+      ship(sequence_, bytes, length);
       const std::uint64_t slot = gatewaySequence & (WINDOW - 1);
       gateway.key[slot] = gatewaySequence;
       gateway.sequence[slot] = sequence_;
@@ -192,6 +193,28 @@ class Sequencer {
     shipMarker(published_ + 1, true);
   }
 
+  // The takeover moment: adopt what the standby held, so the next fresh command continues the
+  // order and a resubmission of anything replicated is answered from the inherited windows.
+  void inherit(const Inherited& inherited) {
+    sequence_ = inherited.held;
+    acked_ = inherited.held;
+    published_ = inherited.publishedFloor == 0 ? 0 : inherited.publishedFloor - 1;
+    if (inherited.gateways.size() > gateways_.size()) {
+      throw std::runtime_error("inheriting more gateways than this sequencer serves");
+    }
+    for (std::size_t at = 0; at < inherited.gateways.size(); at++) {
+      gateways_[at] = inherited.gateways[at];
+    }
+  }
+
+  // Republish one journaled command under this leader's epoch, for the replicated suffix the
+  // old primary never published; consumers skip whatever they already delivered.
+  void republish(const char* command, const std::size_t length) {
+    std::uint64_t sequence = 0;
+    std::memcpy(&sequence, command + sbe::MessageHeader::encodedLength(), sizeof sequence);
+    publishAt(sequence, command, length);
+  }
+
   std::uint64_t sequence() const { return sequence_; }
   std::uint64_t published() const { return published_; }
   std::uint64_t acked() const { return acked_; }
@@ -202,13 +225,6 @@ class Sequencer {
   std::uint32_t epoch() const { return epoch_; }
 
  private:
-  struct Gateway {
-    std::uint64_t nextExpected = 1;
-    std::vector<std::uint64_t> key;
-    std::vector<std::uint64_t> sequence;
-    std::vector<std::uint64_t> timestamp;
-  };
-
   struct Pending {
     std::uint64_t sequence = 0;
     std::uint64_t gatewaySequence = 0;
@@ -218,13 +234,15 @@ class Sequencer {
     std::uint32_t length = 0;
   };
 
-  // One command to the standby as a one-message range, shipped the moment it is sequenced, so
-  // the link pipelines instead of waiting on batches.
-  void ship(const std::uint64_t sequence, const char* command, const std::size_t length) {
+  // One submission to the standby as a one-message range, envelope and stamped command
+  // together, shipped the moment it is sequenced so the link pipelines instead of waiting on
+  // batches. The envelope rides along because the standby mirrors the dedupe windows from it,
+  // which is what a takeover inherits (docs/PROTOCOL.md, leadership).
+  void ship(const std::uint64_t sequence, const char* record, const std::size_t length) {
     char range[common::ranges::PACKET_BYTES];
     common::ranges::Builder builder(range, sizeof range);
     builder.open(sequence, epoch_);
-    builder.add(command, static_cast<std::uint16_t>(length));
+    builder.add(record, static_cast<std::uint16_t>(length));
     const std::size_t built = builder.close();
     const std::size_t at = link_.claim(built);
     std::memcpy(link_.buffer() + at, range, built);
@@ -306,7 +324,7 @@ class Sequencer {
   std::uint64_t duplicates_ = 0;
   std::uint64_t dropped_ = 0;
   std::uint64_t violations_ = 0;
-  std::vector<Gateway> gateways_;
+  std::vector<GatewayState> gateways_;
   std::vector<Pending> pending_;
   std::vector<char> arena_;
   std::uint64_t pendingHead_ = 0;

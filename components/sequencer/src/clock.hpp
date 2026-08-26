@@ -28,4 +28,16 @@ class ScriptedClock {
   std::uint64_t reads_ = 0;
 };
 
+// Time the tests own: leases and failure detection rest on timeouts, and a timeout on a real
+// clock is a flaky test, so the lease machinery runs on this under the chaos suite and every
+// expiry is a fact the test scripted rather than a race it won.
+class VirtualClock {
+ public:
+  std::uint64_t now() const { return now_; }
+  void advance(const std::uint64_t nanoseconds) { now_ += nanoseconds; }
+
+ private:
+  std::uint64_t now_ = 1'000'000'000'000ULL;
+};
+
 }  // namespace exchange::sequencer
