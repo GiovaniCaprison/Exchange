@@ -12,7 +12,7 @@ the citation each decision stands on, is in [ARCHITECTURE.md](docs/ARCHITECTURE.
 ## Layout
 
 ```
-docs/       the architecture, the principles, the protocol, and the component programme
+docs/       the architecture, the principles, the protocol, the practice, and the programme
 schema/     the SBE schema owning every message that crosses a process boundary
 components/ one directory per process, and common/ for the carriers they share
 corpus/     behavioural fixtures with their blessed events
@@ -51,4 +51,5 @@ Prices and quantities are scaled integers everywhere, nothing on a hot path allo
 initialisation, no process behind the sequencer reads a clock, and every claim about behaviour or
 performance names the mechanism that proves it. Why the code is shaped the way it is lives in
 [PRINCIPLES.md](docs/PRINCIPLES.md); what crosses each process boundary lives in
-[PROTOCOL.md](docs/PROTOCOL.md).
+[PROTOCOL.md](docs/PROTOCOL.md); the mechanisms around the code, the flavours, the rituals, the
+toolchain and the box, live in [PRACTICE.md](docs/PRACTICE.md).
