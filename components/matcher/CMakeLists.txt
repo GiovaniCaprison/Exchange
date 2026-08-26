@@ -32,8 +32,26 @@ add_dependencies(matcher-determinism matcher)
 add_executable(matcher-ring test/ring_test.cpp)
 target_link_libraries(matcher-ring PRIVATE exchange-matcher Catch2::Catch2WithMain)
 
+# The proofs that run as binaries: the allocation probe whose allocator counts after
+# initialisation, the flow generator that writes the shared journal, and the measurement harness.
+add_executable(allocation-probe test/allocation_probe_main.cpp)
+target_link_libraries(allocation-probe PRIVATE matcher-test-harness)
+
+add_executable(matcher-allocation test/allocation_probe_test.cpp)
+target_link_libraries(matcher-allocation PRIVATE matcher-test-harness Catch2::Catch2WithMain)
+target_compile_definitions(matcher-allocation
+  PRIVATE ALLOCATION_PROBE_BINARY="$<TARGET_FILE:allocation-probe>")
+add_dependencies(matcher-allocation allocation-probe)
+
+add_executable(flowgen test/flowgen_main.cpp)
+target_link_libraries(flowgen PRIVATE matcher-test-harness)
+
+add_executable(matcher-benchmark src/benchmark_main.cpp)
+target_link_libraries(matcher-benchmark PRIVATE exchange-matcher)
+
 catch_discover_tests(matcher-corpus)
 catch_discover_tests(matcher-invariants)
 catch_discover_tests(matcher-attribution)
 catch_discover_tests(matcher-determinism)
 catch_discover_tests(matcher-ring)
+catch_discover_tests(matcher-allocation)
