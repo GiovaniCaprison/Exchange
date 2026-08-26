@@ -19,6 +19,21 @@ target_link_libraries(matcher-invariants PRIVATE matcher-test-harness Catch2::Ca
 add_executable(matcher-attribution test/attribution_test.cpp)
 target_link_libraries(matcher-attribution PRIVATE matcher-test-harness Catch2::Catch2WithMain)
 
+# The process itself: rings in and out, a journal, snapshots, and replay as the recovery path.
+add_executable(matcher src/matcher_main.cpp)
+target_link_libraries(matcher PRIVATE exchange-matcher)
+
+add_executable(matcher-determinism test/determinism_test.cpp)
+target_link_libraries(matcher-determinism PRIVATE matcher-test-harness Catch2::Catch2WithMain)
+target_compile_definitions(matcher-determinism
+  PRIVATE MATCHER_BINARY="$<TARGET_FILE:matcher>")
+add_dependencies(matcher-determinism matcher)
+
+add_executable(matcher-ring test/ring_test.cpp)
+target_link_libraries(matcher-ring PRIVATE exchange-matcher Catch2::Catch2WithMain)
+
 catch_discover_tests(matcher-corpus)
 catch_discover_tests(matcher-invariants)
 catch_discover_tests(matcher-attribution)
+catch_discover_tests(matcher-determinism)
+catch_discover_tests(matcher-ring)

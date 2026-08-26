@@ -32,6 +32,18 @@ namespace exchange::matcher {
 
 template <typename Ring>
 class Partition {
+  // One instrument's construction facts, kept so a snapshot can rebuild the engine it configures.
+  struct Definition {
+    std::uint32_t instrumentId = 0;
+    std::int64_t tickSize = 1;
+    std::int64_t lotSize = 1;
+    std::int64_t minPrice = 0;
+    std::int64_t maxPrice = 0;
+    std::int64_t bandWidth = 0;
+    std::int64_t openingReference = 0;
+    bool proRata = false;
+  };
+
  public:
   explicit Partition(Ring& ring) : feed_(ring), slab_(1 << 16) {}
 
@@ -102,6 +114,59 @@ class Partition {
 
   const Slab& slab() const { return slab_; }
 
+  // The last command this partition applied, which is what a snapshot is up to.
+  std::uint64_t upToSequence() const { return lastSequence_; }
+
+  // The partition's whole state as one blob, snapshots' stateVersion 1: the shared counters, the
+  // feed's stream position, the slab verbatim, then per instrument its definition and its
+  // engine's state. A restore rebuilds the engines from their definitions and overwrites their
+  // state, so a restored partition is bit-equal to the saved one and the suffix it produces is
+  // byte identical (P-2).
+  void save(ByteSink& sink) const {
+    sink.u64(lastSequence_);
+    sink.u64(counters_.nextOrderId);
+    sink.u64(counters_.nextExecutionId);
+    sink.i64(counters_.arrival);
+    feed_.save(sink);
+    slab_.save(sink);
+    sink.u32(static_cast<std::uint32_t>(definitions_.size()));
+    for (std::size_t at = 0; at < definitions_.size(); at++) {
+      const Definition& definition = definitions_[at];
+      sink.u32(definition.instrumentId);
+      sink.i64(definition.tickSize);
+      sink.i64(definition.lotSize);
+      sink.i64(definition.minPrice);
+      sink.i64(definition.maxPrice);
+      sink.i64(definition.bandWidth);
+      sink.i64(definition.openingReference);
+      sink.u32(definition.proRata ? 1 : 0);
+      engines_[at]->save(sink);
+    }
+  }
+
+  void restore(ByteSource& source) {
+    lastSequence_ = source.u64();
+    counters_.nextOrderId = source.u64();
+    counters_.nextExecutionId = source.u64();
+    counters_.arrival = source.i64();
+    feed_.restore(source);
+    slab_.restore(source);
+    const std::uint32_t count = source.u32();
+    for (std::uint32_t at = 0; at < count; at++) {
+      Definition definition;
+      definition.instrumentId = source.u32();
+      definition.tickSize = source.i64();
+      definition.lotSize = source.i64();
+      definition.minPrice = source.i64();
+      definition.maxPrice = source.i64();
+      definition.bandWidth = source.i64();
+      definition.openingReference = source.i64();
+      definition.proRata = source.u32() != 0;
+      define(definition);
+      engines_.back()->restore(source);
+    }
+  }
+
  private:
   template <typename Decoder>
   static Decoder decoded(char* buffer, const std::size_t body, const sbe::MessageHeader& header,
@@ -113,6 +178,7 @@ class Partition {
 
   template <typename Context>
   void answering(Context&& context) {
+    lastSequence_ = context.sequence();
     feed_.answering(context.sequence(), context.timestamp(), context.instrumentId());
   }
 
@@ -120,11 +186,24 @@ class Partition {
   // sizes the ladder: this is the one allocation the partition's life holds after construction
   // (P-6).
   void define(sbe::InstrumentDefinition& command) {
-    instruments_.push_back(command.context().instrumentId());
+    const Definition definition{command.context().instrumentId(),
+                                command.tickSize(),
+                                command.lotSize(),
+                                command.minPrice(),
+                                command.maxPrice(),
+                                command.bandWidth(),
+                                command.openingReference(),
+                                command.allocation() == sbe::Allocation::PRO_RATA};
+    define(definition);
+  }
+
+  void define(const Definition& definition) {
+    definitions_.push_back(definition);
+    instruments_.push_back(definition.instrumentId);
     engines_.push_back(std::make_unique<Engine<Ring>>(
-        slab_, feed_, counters_, command.tickSize(), command.lotSize(), command.minPrice(),
-        command.maxPrice(), command.bandWidth(), command.openingReference(),
-        command.allocation() == sbe::Allocation::PRO_RATA));
+        slab_, feed_, counters_, definition.tickSize, definition.lotSize, definition.minPrice,
+        definition.maxPrice, definition.bandWidth, definition.openingReference,
+        definition.proRata));
   }
 
   Engine<Ring>& engineOf(const std::uint32_t instrumentId) {
@@ -139,7 +218,9 @@ class Partition {
   Feed<Ring> feed_;
   Slab slab_;
   Counters counters_;
+  std::uint64_t lastSequence_ = 0;
   std::vector<std::uint32_t> instruments_;
+  std::vector<Definition> definitions_;
   std::vector<std::unique_ptr<Engine<Ring>>> engines_;
 };
 

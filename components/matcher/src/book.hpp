@@ -172,6 +172,22 @@ class Book {
 
   std::int32_t tickCount() const { return maxRank_ + 1; }
 
+  void save(ByteSink& sink) const {
+    bids_.save(sink);
+    asks_.save(sink);
+    sink.span(names_);
+    sink.u64(nameMask_);
+    sink.u64(nameCount_);
+  }
+
+  void restore(ByteSource& source) {
+    bids_.restore(source);
+    asks_.restore(source);
+    source.span(names_);
+    nameMask_ = source.u64();
+    nameCount_ = source.u64();
+  }
+
  private:
   Ladder& ladder(const std::int32_t side) { return side == 0 ? bids_ : asks_; }
   const Ladder& ladder(const std::int32_t side) const { return side == 0 ? bids_ : asks_; }

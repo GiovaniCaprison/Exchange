@@ -17,6 +17,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "bytes.hpp"
+
 namespace exchange::matcher {
 
 class Slab {
@@ -80,6 +82,22 @@ class Slab {
     hot(slot).previous = 0;
     hot(slot).next = static_cast<std::uint32_t>(freeHead_);
     freeHead_ = slot;
+  }
+
+  // A snapshot is a copy of the arrays, free list threading and all, so a restored slab is
+  // bit-equal to the one that was saved and the suffix it produces is byte identical (P-2).
+  void save(ByteSink& sink) const {
+    sink.i32(capacity_);
+    sink.i32(freeHead_);
+    sink.span(hot_);
+    sink.span(cold_);
+  }
+
+  void restore(ByteSource& source) {
+    capacity_ = source.i32();
+    freeHead_ = source.i32();
+    source.span(hot_);
+    source.span(cold_);
   }
 
  private:
