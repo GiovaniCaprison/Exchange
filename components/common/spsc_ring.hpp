@@ -184,6 +184,12 @@ class SpscRing {
       mapped_ = nullptr;
       throw std::runtime_error("cannot map ring");
     }
+#if defined(__linux__)
+    // Rings live on tmpfs in deployment, where the kernel honours transparent huge pages for
+    // shared mappings, and fewer TLB entries per ring is a standing win. Advice is all this is:
+    // where the filesystem cannot oblige, the kernel says no and the mapping stands.
+    ::madvise(mapped_, total, MADV_HUGEPAGE);
+#endif
   }
 
   static std::uint64_t aligned(const std::uint64_t length) { return (length + 7) & ~7ULL; }
