@@ -59,6 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y bolt-18
+      - run: sudo ln -sf /usr/lib/llvm-18/lib/libbolt_rt_instr.a /usr/lib/libbolt_rt_instr.a
       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build --target sequencer-benchmark subgen
       - run: ./build/components/sequencer/subgen --submissions subs.exj --commands 30000 --seed 5
