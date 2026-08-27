@@ -28,7 +28,8 @@ before the next begins.
 | 5 | [risk](risk.md) | pre-trade controls inline before sequencing, with a nanosecond budget |
 | 6 | [operations](operations.md) | the market's clock: sessions, auctions on schedule, volatility halts |
 | 7 | [ecosystem](ecosystem.md) | clients and bots that make the venue trade, and the wire-to-wire campaign |
-| 8 | [horizon](horizon.md) | everything after: surveillance, post-trade, off-box transport, other engines |
+| 8 | [oversight](oversight.md) | the venue answerable: drop copy to the responsible, surveillance over the stream |
+| 9 | [horizon](horizon.md) | everything after: post-trade, off-box transport, other engines |
 
 ## The discipline every component carries
 
@@ -45,6 +46,8 @@ toolchain policy and the box itself, are the standing document [PRACTICE.md](../
 The standing documents stay finished-state, so each component's arrival rewrites them rather than
 appending futures to them. The ledger of what to touch:
 
+- oversight: consumed; the alert vocabulary, the oversight plane and the consumer list landed
+  with the component.
 - horizon: whatever a horizon item touches when it stops being horizon.
 
 ## Reading that spans the whole programme
