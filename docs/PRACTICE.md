@@ -15,7 +15,9 @@ behaviour earns a dedicated build because it is the bug class the optimiser is l
 away: a program that exhibits it can pass every test at one compiler version and change behaviour
 at the next, so it is hunted by instrumentation rather than waited for (Serebryany, Bruening,
 Potapenko, Vyukov, AddressSanitizer, USENIX ATC 2012; LLVM UndefinedBehaviorSanitizer
-documentation).
+documentation). The fuzzer flavour, `EXCHANGE_FUZZ`, builds the coverage-guided arm of the
+gateway's hostile suite under a clang that ships the libFuzzer runtime, and ci runs a bounded
+pass on every merge, so the parsers that face the internet are searched as well as tested.
 
 ## The codegen ritual
 
