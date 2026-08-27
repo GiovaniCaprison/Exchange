@@ -24,6 +24,7 @@
 #include "exchange_protocol/PublicOrderReduced.h"
 #include "exchange_protocol/PublicOrderRemoved.h"
 #include "exchange_protocol/PublicSessionState.h"
+#include "exchange_protocol/PublicSessionSummary.h"
 #include "exchange_protocol/SnapshotComplete.h"
 #include "ranges.hpp"
 #include "stream.hpp"
@@ -45,6 +46,15 @@ struct LastTrade {
   std::uint64_t count = 0;
 };
 
+struct SessionSummary {
+  std::int64_t open = 0;
+  std::int64_t high = 0;
+  std::int64_t low = 0;
+  std::int64_t close = 0;
+  std::int64_t volume = 0;
+  std::uint64_t prints = 0;
+};
+
 template <typename Rewind>
 class FeedHandler {
  public:
@@ -61,6 +71,7 @@ class FeedHandler {
     states_.reserve(64);
     touches_.reserve(64);
     trades_.reserve(64);
+    summaries_.reserve(64);
     indicatives_.reserve(64);
     if (!viaSnapshot) {
       source_.emplace(1, 1, rewind_);
@@ -112,6 +123,11 @@ class FeedHandler {
   sbe::SessionState::Value stateOf(const std::uint32_t instrumentId) const {
     const long at = indexOf(instrumentId);
     return at < 0 ? sbe::SessionState::CLOSED : states_[static_cast<std::size_t>(at)];
+  }
+
+  SessionSummary summaryOf(const std::uint32_t instrumentId) const {
+    const long at = indexOf(instrumentId);
+    return at < 0 ? SessionSummary{} : summaries_[static_cast<std::size_t>(at)];
   }
 
   std::int64_t indicativeOf(const std::uint32_t instrumentId) const {
@@ -231,6 +247,15 @@ class FeedHandler {
                             length);
         const std::size_t instrument = noteInstrument(state.context().instrumentId());
         states_[instrument] = state.state();
+        break;
+      }
+      case sbe::PublicSessionSummary::sbeTemplateId(): {
+        sbe::PublicSessionSummary summary;
+        summary.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
+                              length);
+        const std::size_t instrument = noteInstrument(summary.context().instrumentId());
+        summaries_[instrument] = {summary.openPrice(),  summary.highPrice(), summary.lowPrice(),
+                                  summary.closePrice(), summary.volume(),    summary.prints()};
         break;
       }
       case sbe::PublicAuctionIndicative::sbeTemplateId(): {
@@ -364,6 +389,7 @@ class FeedHandler {
     states_.push_back(sbe::SessionState::CLOSED);
     touches_.push_back({});
     trades_.push_back({});
+    summaries_.push_back({});
     indicatives_.push_back(0);
     return instruments_.size() - 1;
   }
@@ -386,6 +412,7 @@ class FeedHandler {
   std::vector<sbe::SessionState::Value> states_;
   std::vector<Touch> touches_;
   std::vector<LastTrade> trades_;
+  std::vector<SessionSummary> summaries_;
   std::vector<std::int64_t> indicatives_;
 };
 
