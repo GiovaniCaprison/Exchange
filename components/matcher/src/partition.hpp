@@ -76,6 +76,18 @@ class Partition {
       }
       case sbe::MassCancel::sbeTemplateId(): {
         auto command = decoded<sbe::MassCancel>(buffer, body, header, end);
+        if (command.context().instrumentId() == 0) {
+          // Instrument zero addresses every book: the venue-wide sweep a kill switch or a
+          // cancel on disconnect means. Each engine answers under its own instrument so the
+          // removals it emits carry the book they empty.
+          lastSequence_ = command.context().sequence();
+          for (std::size_t at = 0; at < engines_.size(); at++) {
+            feed_.answering(command.context().sequence(), command.context().timestamp(),
+                            instruments_[at]);
+            engines_[at]->massCancel(command.clientOrderId(), command.participantId());
+          }
+          break;
+        }
         answering(command.context());
         engineOf(command.context().instrumentId())
             .massCancel(command.clientOrderId(), command.participantId());
