@@ -41,6 +41,12 @@ exchange_measured(sequencer)
 add_executable(subgen test/subgen_main.cpp)
 target_link_libraries(subgen PRIVATE exchange-sequencer matcher-test-harness)
 
+# The two-hop driver: plays a gateway and a consumer at once, measuring driver write to first
+# answering event across the live processes, closed loop (docs/PRACTICE.md, the campaign).
+add_executable(driver test/driver_main.cpp)
+target_link_libraries(driver PRIVATE exchange-sequencer matcher-test-harness)
+exchange_measured(driver)
+
 add_executable(sequencer-determinism test/determinism_test.cpp)
 target_link_libraries(sequencer-determinism PRIVATE Catch2::Catch2WithMain)
 target_compile_definitions(sequencer-determinism PRIVATE
