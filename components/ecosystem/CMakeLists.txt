@@ -22,6 +22,12 @@ target_include_directories(ecosystem-orderentry PRIVATE ${SEQUENCER_TEST_DIR})
 target_link_libraries(ecosystem-orderentry
   PRIVATE exchange-ecosystem exchange-matcher matcher-test-harness Catch2::Catch2WithMain)
 
+add_executable(ecosystem-bots test/bots_test.cpp)
+target_include_directories(ecosystem-bots PRIVATE ${SEQUENCER_TEST_DIR} ${MARKETDATA_TEST_DIR})
+target_link_libraries(ecosystem-bots
+  PRIVATE exchange-ecosystem exchange-marketdata exchange-matcher matcher-test-harness
+          Catch2::Catch2WithMain)
+
 add_executable(ecosystem-allocation-probe test/allocation_probe_main.cpp)
 target_link_libraries(ecosystem-allocation-probe PRIVATE exchange-ecosystem exchange-sequencer)
 
@@ -33,4 +39,5 @@ add_dependencies(ecosystem-allocation ecosystem-allocation-probe)
 
 catch_discover_tests(ecosystem-feedhandler)
 catch_discover_tests(ecosystem-orderentry)
+catch_discover_tests(ecosystem-bots)
 catch_discover_tests(ecosystem-allocation)
