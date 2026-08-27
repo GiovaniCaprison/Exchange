@@ -51,6 +51,25 @@ jobs:
       - run: cmake --build build-fuzz --target gateway-fuzz
       - run: ./build-fuzz/components/gateway/gateway-fuzz -runs=20000 -max_len=512
 
+  # The BOLT cycle proven end to end on every merge: instrument, run a small workload, optimize,
+  # and run the optimized binary, all in instrumentation mode since a runner has no performance
+  # counters; the box flips BOLT_MODE=perf for the real profile.
+  bolt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y bolt-18
+      - run: sudo ln -sf /usr/lib/llvm-18/lib/libbolt_rt_instr.a /usr/lib/libbolt_rt_instr.a
+      - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build --target sequencer-benchmark subgen
+      - run: ./build/components/sequencer/subgen --submissions subs.exj --commands 30000 --seed 5
+      - run: |
+          LLVM_BOLT=llvm-bolt-18 scripts/bolt.sh build/components/sequencer/sequencer-benchmark \
+            -- --submissions subs.exj --results bolt-check --policy none --warmup 1000
+      - run: |
+          ./build/components/sequencer/sequencer-benchmark.bolt \
+            --submissions subs.exj --results bolt-check --policy none --warmup 1000 --label bolted
+
   format:
     runs-on: ubuntu-latest
     steps:

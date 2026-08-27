@@ -54,6 +54,11 @@ function(exchange_measured target)
   endif()
   target_compile_definitions(${target} PRIVATE
     EXCHANGE_BUILD_FLAGS="${CMAKE_BUILD_TYPE} LTO=${EXCHANGE_LTO} PGO=${EXCHANGE_PGO} CXXFLAGS=${CMAKE_CXX_FLAGS}")
+  # BOLT rewrites code post link and needs the relocations the linker would otherwise discard;
+  # the cost is file size only, so the measured binaries always carry them on Linux.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(${target} PRIVATE -Wl,--emit-relocs)
+  endif()
 endfunction()
 
 # Points git at the committed hooks on the first configure, so formatting on commit installs

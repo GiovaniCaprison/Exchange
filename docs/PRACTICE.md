@@ -97,6 +97,47 @@ sequencer under the local policy, then under safe with the standby process on it
 the difference between those two runs is the price of safety across real cores. Results
 directories hold the raw series and manifests; `scripts/summarize.py` reads them.
 
+The run matrix, literally, with rings on /dev/shm and every process on its own isolated core;
+the flavours repeat it with their options on the configure line and their labels on the runs:
+
+```
+scripts/box_setup.sh check
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-march=native
+cmake --build build -j
+
+build/components/matcher/flowgen --journal flow.exj --commands 2000000 --seed 7
+build/components/matcher/matcher-benchmark --journal flow.exj --results results/campaign \
+  --core 12 --label matcher
+
+build/components/sequencer/subgen --submissions subs.exj --commands 2000000 --seed 7
+build/components/sequencer/sequencer-benchmark --submissions subs.exj \
+  --results results/campaign --core 12 --policy none --label seq-none
+build/components/sequencer/sequencer-benchmark --submissions subs.exj \
+  --results results/campaign --core 12 --policy local --label seq-local
+build/components/sequencer/sequencer-benchmark --submissions subs.exj \
+  --results results/campaign --core 12 --policy safe --label seq-safe
+
+build/components/marketdata/marketdata-benchmark --results results/campaign --core 12
+build/components/gateway/gateway-benchmark --results results/campaign --core 12
+
+build/components/sequencer/driver --gateway /dev/shm/gw.ring --acks /dev/shm/ack.ring \
+  --events /dev/shm/events.ring --results results/campaign --core 12 --label twohop-local &
+build/components/sequencer/sequencer --in /dev/shm/gw.ring --acks /dev/shm/ack.ring \
+  --out /dev/shm/seq.ring --journal seq.exj &
+build/components/matcher/matcher --in /dev/shm/seq.ring --out /dev/shm/events.ring \
+  --journal matcher.exj &
+wait %1 && kill %2 %3
+```
+
+Pin the sequencer and matcher too (`taskset -c 13` and `-c 14` before their commands), rerun the
+two-hop with the sequencer under `--policy safe --replicate /dev/shm/rep.ring --replicate-acks
+/dev/shm/repack.ring` and a `sequencer --standby-in /dev/shm/rep.ring --standby-acks
+/dev/shm/repack.ring --journal standby.exj` process on core 15, and the difference between the
+two driver runs is the price of safety across real cores. Profile guidance is two passes of the
+same matrix, `-DEXCHANGE_PGO=generate` then `-DEXCHANGE_PGO=use`; post-link layout is one
+command per measured binary, `BOLT_MODE=perf scripts/bolt.sh BINARY -- WORKLOAD-ARGS`, whose
+whole cycle ci proves in instrumentation mode on every merge.
+
 The campaign feeds back into the repository: baselines become budgets, budgets become gates,
 and the codegen ritual's blessed-escape list hardens into a check, so the next change that
 spends what the campaign banked fails a build instead of a retrospective.
