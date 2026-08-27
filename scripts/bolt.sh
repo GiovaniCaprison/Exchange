@@ -10,6 +10,8 @@
 #
 #   BOLT_MODE=instrument|perf   (default instrument)
 #   LLVM_BOLT=llvm-bolt         PERF2BOLT=perf2bolt        PERF=perf
+#   BOLT_RT=path                the instrumentation runtime, found automatically in the
+#                               versioned LLVM prefix when packaged tools hide it there
 #
 # The result lands beside the input as BINARY.bolt; run the same workload through both and the
 # difference is the price the compiler's layout was paying.
@@ -29,12 +31,22 @@ BOLT="${LLVM_BOLT:-llvm-bolt}"
 WORK="$(mktemp -d)"
 PROFILE="${WORK}/profile.fdata"
 
+if [ -z "$BOLT_RT" ] && [ "$MODE" = "instrument" ]; then
+  for candidate in /usr/lib/llvm-*/lib/libbolt_rt_instr.a /usr/lib/libbolt_rt_instr.a; do
+    if [ -f "$candidate" ]; then
+      BOLT_RT="$candidate"
+      break
+    fi
+  done
+fi
+
 if [ "$MODE" = "perf" ]; then
   "${PERF:-perf}" record -e cycles:u -j any,u -o "${WORK}/perf.data" -- "$BINARY" "$@"
   "${PERF2BOLT:-perf2bolt}" -p "${WORK}/perf.data" -o "$PROFILE" "$BINARY"
 else
   "$BOLT" "$BINARY" -instrument -o "${BINARY}.inst" \
-    --instrumentation-file="$PROFILE"
+    --instrumentation-file="$PROFILE" \
+    ${BOLT_RT:+--runtime-instrumentation-lib="$BOLT_RT"}
   "${BINARY}.inst" "$@"
   rm -f "${BINARY}.inst"
 fi
