@@ -14,6 +14,10 @@
 #include "exchange_protocol/InstrumentDefinition.h"
 #include "exchange_protocol/LeaseRequest.h"
 #include "exchange_protocol/LeaseResponse.h"
+#include "exchange_protocol/LoginAccepted.h"
+#include "exchange_protocol/LoginRejected.h"
+#include "exchange_protocol/LoginRequest.h"
+#include "exchange_protocol/LogoutRequest.h"
 #include "exchange_protocol/MassCancel.h"
 #include "exchange_protocol/MessageHeader.h"
 #include "exchange_protocol/NewOrder.h"
@@ -29,6 +33,8 @@
 #include "exchange_protocol/ReplicationAck.h"
 #include "exchange_protocol/RewindRequest.h"
 #include "exchange_protocol/SessionControl.h"
+#include "exchange_protocol/SessionEnded.h"
+#include "exchange_protocol/SessionHeartbeat.h"
 #include "exchange_protocol/SessionStateChanged.h"
 
 using namespace exchange::protocol;
@@ -60,6 +66,39 @@ TEST_CASE("the contexts and carrier prefixes hold the sizes the protocol documen
   CHECK(EventContext::encodedLength() == 32);
   CHECK(MessageHeader::encodedLength() + GatewaySubmission::sbeBlockLength() == 24);
   CHECK(MessageHeader::encodedLength() + RangeHeader::sbeBlockLength() == 24);
+}
+
+TEST_CASE("the session plane round trips") {
+  std::vector<char> space(256);
+  {
+    auto out = encoded<LoginRequest>(space);
+    out.expectedSequence(41).credential(0xC0FFEE).participantId(7).reserved(0);
+    auto in = decoded<LoginRequest>(space);
+    CHECK(in.expectedSequence() == 41);
+    CHECK(in.credential() == 0xC0FFEE);
+    CHECK(in.participantId() == 7);
+  }
+  {
+    auto out = encoded<LoginAccepted>(space);
+    out.nextSequence(41).participantId(7).reserved(0);
+    auto in = decoded<LoginAccepted>(space);
+    CHECK(in.nextSequence() == 41);
+    CHECK(in.participantId() == 7);
+  }
+  {
+    auto out = encoded<LoginRejected>(space);
+    out.reason(LoginRefusal::SEQUENCE_AHEAD);
+    auto in = decoded<LoginRejected>(space);
+    CHECK(in.reason() == LoginRefusal::SEQUENCE_AHEAD);
+  }
+  {
+    encoded<SessionHeartbeat>(space).reserved(0);
+    decoded<SessionHeartbeat>(space);
+    encoded<LogoutRequest>(space).reserved(0);
+    decoded<LogoutRequest>(space);
+    encoded<SessionEnded>(space).reserved(0);
+    decoded<SessionEnded>(space);
+  }
 }
 
 TEST_CASE("the carrier prefixes round trip") {
