@@ -62,6 +62,7 @@ class OrderEntry {
     idOwners_.assign(ORDERS, 0);
     instruments_.reserve(POSITIONS);
     positions_.reserve(POSITIONS);
+    latencies_.assign(LATENCIES, 0);
   }
 
   // The transport surface, driven by whatever owns the socket ---------------------------------
@@ -137,6 +138,7 @@ class OrderEntry {
     order.price = price;
     order.remaining = quantity;
     order.side = static_cast<std::uint8_t>(side == sbe::Side::BUY ? 0 : 1);
+    order.submittedAt = clock_.now();
     order.live = false;
     command<sbe::NewOrder>(instrumentId, [&](sbe::NewOrder& out) {
       out.clientOrderId(clientOrderId)
@@ -202,6 +204,15 @@ class OrderEntry {
     }
   }
 
+  // One measured acceptance round trip in nanoseconds, zero when none is waiting. The owner
+  // drains these into whatever series discipline it keeps (P-14).
+  std::uint64_t drainAcceptanceLatency() {
+    if (latencyOut_ == latencyIn_) {
+      return 0;
+    }
+    return latencies_[latencyOut_++ & (LATENCIES - 1)];
+  }
+
   std::uint64_t seen() const { return seen_; }
   std::uint64_t executions() const { return executions_; }
   std::uint64_t rejections() const { return rejections_; }
@@ -218,12 +229,14 @@ class OrderEntry {
     std::uint32_t instrumentId = 0;
     std::int64_t price = 0;
     std::int64_t remaining = 0;
+    std::uint64_t submittedAt = 0;
     std::uint8_t side = 0;  // 0 buy, 1 sell, 2 unknown to a replaying amnesiac
     bool live = false;
   };
 
  private:
   static constexpr std::size_t OUT_BYTES = 1 << 20;
+  static constexpr std::uint64_t LATENCIES = 1 << 12;
   static constexpr std::uint64_t DEAD = 5;
   static constexpr std::uint8_t UNKNOWN_SIDE = 2;
 
@@ -307,6 +320,17 @@ class OrderEntry {
         order.orderId = event.orderId();
         order.live = true;
         idSlot(event.orderId()) = event.clientOrderId();
+        // The wire-to-wire fact, measured from the seat that pays for it: submission written to
+        // acceptance heard, on this client's clock. Replayed acceptances carry no intent stamp
+        // and record nothing.
+        if (order.submittedAt != 0) {
+          if (latencyIn_ - latencyOut_ == LATENCIES) {
+            latencyOut_++;
+          }
+          const std::uint64_t took = clock_.now() - order.submittedAt;
+          latencies_[latencyIn_++ & (LATENCIES - 1)] = took == 0 ? 1 : took;
+          order.submittedAt = 0;
+        }
         break;
       }
       case sbe::OrderRejected::sbeTemplateId(): {
@@ -535,6 +559,9 @@ class OrderEntry {
   std::vector<std::uint64_t> idOwners_;
   std::vector<std::uint32_t> instruments_;
   std::vector<std::int64_t> positions_;
+  std::vector<std::uint64_t> latencies_;
+  std::uint64_t latencyIn_ = 0;
+  std::uint64_t latencyOut_ = 0;
 };
 
 }  // namespace exchange::ecosystem

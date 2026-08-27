@@ -53,6 +53,16 @@ class UdpSink {
     to_.sin_family = AF_INET;
     to_.sin_port = htons(static_cast<std::uint16_t>(std::stoi(address.substr(colon + 1))));
     ::inet_pton(AF_INET, address.substr(0, colon).c_str(), &to_.sin_addr);
+    // A multicast feed is ITCH's delivery: every participant joins the group and one send
+    // reaches them all. The venue is a one-box deployment, so the group rides loopback; picking
+    // a NIC is off-box work and lives on the horizon page.
+    if ((ntohl(to_.sin_addr.s_addr) >> 28) == 0xE) {
+      in_addr on{};
+      on.s_addr = htonl(INADDR_LOOPBACK);
+      ::setsockopt(socket_, IPPROTO_IP, IP_MULTICAST_IF, &on, sizeof on);
+      const unsigned char loop = 1;
+      ::setsockopt(socket_, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof loop);
+    }
   }
   ~UdpSink() {
     if (socket_ >= 0) {

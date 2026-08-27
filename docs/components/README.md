@@ -45,10 +45,7 @@ toolchain policy and the box itself, are the standing document [PRACTICE.md](../
 The standing documents stay finished-state, so each component's arrival rewrites them rather than
 appending futures to them. The ledger of what to touch:
 
-- operations: PROTOCOL.md gains halt semantics beyond the session states if any are added;
-  ARCHITECTURE.md gains the scheduler as the sender of SessionControl.
-- ecosystem: README.md gains the run-a-venue quickstart; METHODOLOGY-style content lands with the
-  wire-to-wire campaign if a measurement document is split out by then.
+- horizon: whatever a horizon item touches when it stops being horizon.
 
 ## Reading that spans the whole programme
 

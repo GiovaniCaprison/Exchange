@@ -306,7 +306,9 @@ renumbers onto its own sequence, carried by its ranges the way every stream here
 and travels as the same MoldUDP64-shaped packets on two identical feeds, A and B, so a consumer
 takes whichever packet arrives first and single-packet loss costs nothing; what both feeds lose
 the retransmission server replays by range. The shape follows TotalView-ITCH and the delivery
-follows MoldUDP64 (Nasdaq, public specifications).
+follows MoldUDP64 (Nasdaq, public specifications). On the box each feed is UDP, unicast when one
+consumer sits on each twin or a multicast group every participant joins, which is how the real
+delivery reaches a crowd with one send.
 
 A late joiner recovers by snapshot: the current visible book as a sequence of PublicOrderAdded
 messages per instrument, in queue priority order so replaying them rebuilds not just the shape

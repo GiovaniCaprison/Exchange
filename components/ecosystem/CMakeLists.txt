@@ -37,7 +37,24 @@ target_compile_definitions(ecosystem-allocation PRIVATE
   ECOSYSTEM_ALLOCATION_PROBE_BINARY="$<TARGET_FILE:ecosystem-allocation-probe>")
 add_dependencies(ecosystem-allocation ecosystem-allocation-probe)
 
+# The participant process, and the whole venue held to its word over real wires.
+add_executable(bot src/bot_main.cpp)
+target_link_libraries(bot PRIVATE exchange-ecosystem exchange-sequencer)
+exchange_measured(bot)
+
+add_executable(ecosystem-day test/day_socket_test.cpp)
+target_link_libraries(ecosystem-day PRIVATE Catch2::Catch2WithMain)
+target_compile_definitions(ecosystem-day PRIVATE
+  BOT_BINARY="$<TARGET_FILE:bot>"
+  GATEWAY_BINARY="$<TARGET_FILE:gateway>"
+  SEQUENCER_BINARY="$<TARGET_FILE:sequencer>"
+  MATCHER_BINARY="$<TARGET_FILE:matcher>"
+  MARKETDATA_BINARY="$<TARGET_FILE:marketdata>"
+  OPERATIONS_BINARY="$<TARGET_FILE:operations>")
+add_dependencies(ecosystem-day bot gateway sequencer matcher marketdata operations)
+
 catch_discover_tests(ecosystem-feedhandler)
 catch_discover_tests(ecosystem-orderentry)
 catch_discover_tests(ecosystem-bots)
+catch_discover_tests(ecosystem-day)
 catch_discover_tests(ecosystem-allocation)

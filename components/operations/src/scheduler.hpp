@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "exchange_protocol/GatewaySubmission.h"
+#include "exchange_protocol/InstrumentDefinition.h"
 #include "exchange_protocol/MessageHeader.h"
 #include "exchange_protocol/OrderExecuted.h"
 #include "exchange_protocol/SessionControl.h"
@@ -94,6 +95,31 @@ class Scheduler {
       resubmitUnacked();
       lastAck_ = now;
     }
+  }
+
+  // Reference data is this authority's to speak too: an instrument's definition precedes every
+  // other command for it, and it rides the same acknowledged carrier as the session states.
+  struct Definition {
+    std::uint32_t instrumentId = 0;
+    std::int64_t tickSize = 1;
+    std::int64_t lotSize = 1;
+    std::int64_t minPrice = 1;
+    std::int64_t maxPrice = 1'000'000'000;
+    std::int64_t bandWidth = 0;
+    std::int64_t openingReference = 0;
+    std::uint8_t priceScale = 4;
+  };
+
+  void define(const Definition& definition) {
+    send<sbe::InstrumentDefinition>(definition.instrumentId, [&](sbe::InstrumentDefinition& out) {
+      out.tickSize(definition.tickSize)
+          .lotSize(definition.lotSize)
+          .minPrice(definition.minPrice)
+          .maxPrice(definition.maxPrice)
+          .bandWidth(definition.bandWidth)
+          .openingReference(definition.openingReference);
+      out.priceScale(definition.priceScale).allocation(sbe::Allocation::PRICE_TIME);
+    });
   }
 
   // The operator's hand: halt one instrument now, reopening on the usual machinery.
@@ -227,22 +253,29 @@ class Scheduler {
   }
 
   void submit(const std::uint32_t instrumentId, const sbe::SessionState::Value state) {
+    send<sbe::SessionControl>(instrumentId,
+                              [&](sbe::SessionControl& command) { command.state(state); });
+  }
+
+  // Any command this authority speaks rides the same carrier: encoded in place, retained until
+  // acknowledged, resubmitted as identical bytes after silence.
+  template <typename Message, typename Fill>
+  void send(const std::uint32_t instrumentId, Fill&& fill) {
     const std::uint64_t gatewaySequence = nextGatewaySequence_++;
     if (gatewaySequence - ackedUpTo_ > PENDING) {
       throw std::runtime_error("the scheduler's pending window overflowed; the venue is gone");
     }
-    constexpr std::size_t COMMAND =
-        sbe::MessageHeader::encodedLength() + sbe::SessionControl::sbeBlockLength();
+    constexpr std::size_t COMMAND = sbe::MessageHeader::encodedLength() + Message::sbeBlockLength();
     constexpr std::size_t RECORD = sequencer::SUBMISSION_BYTES + COMMAND;
     const std::size_t at = submissions_.claim(RECORD);
     sbe::GatewaySubmission envelope;
     envelope.wrapAndApplyHeader(submissions_.buffer(), at, at + RECORD);
     envelope.gatewaySequence(gatewaySequence).gatewayId(config_.gatewayId).reserved(0);
-    sbe::SessionControl command;
+    Message command;
     command.wrapAndApplyHeader(submissions_.buffer(), at + sequencer::SUBMISSION_BYTES,
                                at + RECORD);
     command.context().sequence(0).timestamp(0).instrumentId(instrumentId).reserved(0);
-    command.state(state);
+    fill(command);
     submissions_.commit();
     submissions_.publish();
     // The same bytes wait for the acknowledgment that retires them.

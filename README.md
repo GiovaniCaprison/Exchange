@@ -56,6 +56,21 @@ is a ledger accounted from the admission side and reconciled by the venue's own 
 the engine's actual holdings by invariants and to conservation, draining to zero when everything
 closes. Its design and its proofs live in `components/risk/`.
 
+Market operations is the market's clock: trading states move only on SessionControl commands, and
+the operations scheduler is their one sender, a consumer with authority that reads the same
+sequenced stream as everyone and can only act by submitting commands that take effect when
+sequenced. It runs the calendar, fires LULD-shaped volatility halts from a trailing band over the
+stream's own prints, reopens halted books through an auction, and owns reference data, so an
+instrument's definition rides the same acknowledged carrier as the session states. Its design and
+its proofs live in `components/operations/`.
+
+The ecosystem is the participant's seat: a feed handler consuming the public feed A/B-arbitrated
+with gap repair and snapshot join, an order entry client speaking the session protocol with
+replay-exact reconnection, and on top of both the bots that make the venue trade, a market maker
+in Avellaneda and Stoikov's shape, noise takers, and a momentum chaser, every one a pure function
+of the stream and a seed, so a simulated day driven twice is the same day, journals included. Its
+design and its proofs live in `components/ecosystem/`.
+
 ## Build
 
 Requires CMake and a C++23 compiler.
@@ -70,6 +85,36 @@ Configuring points git at the committed hooks, so formatting on commit installs 
 who builds. Formatting is `clang-format` at a hundred columns, pinned by version in
 `.clang-format-version`, and the ci workflow fails on a file the pinned version would change, so
 the format is part of the build rather than a habit.
+
+## Run a venue
+
+One command runs the whole venue and its participants on this machine, every process real, and
+leaves the journals, the logs and the maker's wire-to-wire measurement in a directory:
+
+```
+scripts/day.sh trading-day
+```
+
+`DURATION=60`, `NOISE=3`, `MULTICAST=239.7.7.7` (a group every bot joins, ITCH's delivery; without
+it the two unicast feeds seat two consumers) and `SPIN=1` (busy-poll the gateway, the box's
+posture) parameterise the day. The script is the automation; the processes it starts, in
+dependency order, are these, and starting them by hand teaches the wiring:
+
+```
+build/components/gateway/gateway --listen 36201 --submissions gw.ring --acks gwacks.ring   --events events.ring --participants 7:42,8:43 --gateway-id 0 &
+build/components/operations/operations --submissions ops.ring --acks opsacks.ring   --events events.ring --instruments 1 --define 1:5:1:5:1000000:100000000:100000   --calendar 0:CONTINUOUS --gateway-id 1 &
+build/components/sequencer/sequencer --in gw.ring,ops.ring --acks gwacks.ring,opsacks.ring   --out seq.ring --journal seq.exj &
+build/components/matcher/matcher --in seq.ring --out events.ring --journal matcher.exj &
+build/components/marketdata/marketdata --in events.ring --a 127.0.0.1:36202   --b 127.0.0.1:36203 --rewind 36204 &
+build/components/ecosystem/bot --connect 36201 --participant 7 --secret 42 --feed 36202   --rewind 36204 --role maker --duration-s 30 --results day --label wire-to-wire &
+build/components/ecosystem/bot --connect 36201 --participant 8 --secret 43 --feed 36203   --rewind 36204 --role noise --seed 9 --duration-s 30 --expect-trades
+```
+
+The gateway and the scheduler create their submission rings and wait for the rest; the sequencer
+attaches them and makes the order; the matcher broadcasts events; market data serves the feed,
+retransmission and snapshots; the bots trade. The whole arrangement is also a merge gate: the
+ecosystem suite runs exactly this venue as processes and holds it to its word by the crowd's own
+exit code.
 
 ## Conventions
 
