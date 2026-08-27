@@ -24,6 +24,7 @@
 #include "exchange_protocol/PublicOrderReduced.h"
 #include "exchange_protocol/PublicOrderRemoved.h"
 #include "exchange_protocol/PublicSessionState.h"
+#include "exchange_protocol/PublicSessionSummary.h"
 #include "exchange_protocol/PublicTopOfBook.h"
 #include "exchange_protocol/SessionStateChanged.h"
 
@@ -43,6 +44,16 @@ struct PublicOrder {
 template <typename Publisher>
 class Builder {
  public:
+  // One session's official numbers for one instrument, reset when a new session pre-opens.
+  struct Tape {
+    std::int64_t open = 0;
+    std::int64_t high = 0;
+    std::int64_t low = 0;
+    std::int64_t close = 0;
+    std::int64_t volume = 0;
+    std::uint64_t prints = 0;
+  };
+
   static constexpr std::size_t ORDERS = 1 << 17;
 
   explicit Builder(Publisher& publisher) : publisher_(publisher) {
@@ -50,6 +61,7 @@ class Builder {
     orders_.resize(ORDERS);
     instruments_.reserve(64);
     states_.reserve(64);
+    tapes_.reserve(64);
   }
 
   void onEvent(char* message, const std::size_t length) {
@@ -88,6 +100,20 @@ class Builder {
                  event.price(), event.quantity());
         executed(event.context().instrumentId(), event.restingOrderId(), event.executionId(),
                  event.price(), event.quantity());
+        // The session's tape counts the print once, whichever book orders it touched.
+        {
+          Tape& day = tape(event.context().instrumentId());
+          if (day.prints == 0) {
+            day.open = event.price();
+            day.high = event.price();
+            day.low = event.price();
+          }
+          day.high = event.price() > day.high ? event.price() : day.high;
+          day.low = event.price() < day.low ? event.price() : day.low;
+          day.close = event.price();
+          day.volume += event.quantity();
+          day.prints++;
+        }
         break;
       }
       case sbe::OrderReduced::sbeTemplateId(): {
@@ -124,6 +150,23 @@ class Builder {
         stateOfMutable(event.context().instrumentId()) = event.state();
         publish<sbe::PublicSessionState>(event.context().instrumentId(),
                                          [&](auto& out) { out.state(event.state()); });
+        if (event.state() == sbe::SessionState::CLOSED) {
+          // The session's last word: the official numbers of the day, the close being the last
+          // print, which is the closing cross when one ran.
+          const Tape& day = tape(event.context().instrumentId());
+          if (day.prints > 0) {
+            publish<sbe::PublicSessionSummary>(event.context().instrumentId(), [&](auto& out) {
+              out.openPrice(day.open)
+                  .highPrice(day.high)
+                  .lowPrice(day.low)
+                  .closePrice(day.close)
+                  .volume(day.volume)
+                  .prints(day.prints);
+            });
+          }
+        } else if (event.state() == sbe::SessionState::PRE_OPEN) {
+          tape(event.context().instrumentId()) = Tape{};
+        }
         break;
       }
       case sbe::AuctionIndicative::sbeTemplateId(): {
@@ -234,6 +277,28 @@ class Builder {
     }
     instruments_.push_back(instrument);
     states_.push_back(sbe::SessionState::CLOSED);
+    tapes_.emplace_back();
+  }
+
+ public:
+  Tape tapeOf(const std::uint32_t instrument) const {
+    for (std::size_t at = 0; at < instruments_.size(); at++) {
+      if (instruments_[at] == instrument) {
+        return tapes_[at];
+      }
+    }
+    return {};
+  }
+
+ private:
+  Tape& tape(const std::uint32_t instrument) {
+    noteInstrument(instrument);
+    for (std::size_t at = 0; at < instruments_.size(); at++) {
+      if (instruments_[at] == instrument) {
+        return tapes_[at];
+      }
+    }
+    throw std::logic_error("the tape of an instrument never noted");
   }
 
   sbe::SessionState::Value& stateOfMutable(const std::uint32_t instrument) {
@@ -302,6 +367,7 @@ class Builder {
   std::vector<PublicOrder> orders_;
   std::vector<std::uint32_t> instruments_;
   std::vector<sbe::SessionState::Value> states_;
+  std::vector<Tape> tapes_;
   std::size_t count_ = 0;
   std::uint64_t arrivals_ = 0;
   std::uint64_t lastTimestamp_ = 0;

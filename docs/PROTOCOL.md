@@ -340,7 +340,9 @@ instrument and nothing else, so the feed structurally cannot carry attribution r
 merely choosing to strip it. The mapping is the consumer rules made public: a rested order is
 added, an execution names each book order it reduced with its price and quantity, a reduction
 names the new displayed quantity, a removal deletes, and trading states and auction indications
-pass through; acceptances and refusals are private to their sessions and never appear. The feed
+pass through; the close publishes PublicSessionSummary, the session's official numbers, open,
+high, low, close, volume and prints, the close being the last print, which is the closing cross
+when one ran; acceptances and refusals are private to their sessions and never appear. The feed
 renumbers onto its own sequence, carried by its ranges the way every stream here carries one,
 and travels as the same MoldUDP64-shaped packets on two identical feeds, A and B, so a consumer
 takes whichever packet arrives first and single-packet loss costs nothing; what both feeds lose

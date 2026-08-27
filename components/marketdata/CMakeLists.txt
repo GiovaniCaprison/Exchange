@@ -15,6 +15,10 @@ target_include_directories(marketdata-rebuild PRIVATE ${SEQUENCER_TEST_DIR})
 target_link_libraries(marketdata-rebuild
   PRIVATE exchange-marketdata matcher-test-harness Catch2::Catch2WithMain)
 
+add_executable(marketdata-summary test/summary_test.cpp)
+target_link_libraries(marketdata-summary
+  PRIVATE exchange-marketdata exchange-matcher matcher-test-harness Catch2::Catch2WithMain)
+
 add_executable(marketdata-glimpse test/glimpse_test.cpp)
 target_include_directories(marketdata-glimpse PRIVATE ${SEQUENCER_TEST_DIR})
 target_link_libraries(marketdata-glimpse
@@ -57,6 +61,7 @@ exchange_measured(marketdata-benchmark)
 
 catch_discover_tests(marketdata-rebuild)
 catch_discover_tests(marketdata-glimpse)
+catch_discover_tests(marketdata-summary)
 catch_discover_tests(marketdata-ab)
 catch_discover_tests(marketdata-socket)
 catch_discover_tests(marketdata-allocation)
