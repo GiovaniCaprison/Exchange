@@ -3,14 +3,6 @@
 Everything worth building after the arc, each entry small here and owed its own page when its
 turn comes. Nothing on this list blocks anything above it.
 
-## Surveillance
-
-A consumer of the sequenced stream detecting spoofing, layering and wash trades, which the
-architecture makes a stream-processing problem: the evidence is already one totally ordered log
-with one timestamp per command. The real-world ground: the first criminal spoofing conviction
-(United States v. Coscia, tried 2015) for what pattern detection looks for, and FINRA's
-Consolidated Audit Trail for what regulators actually collect.
-
 ## Post-trade
 
 Trade capture into end-of-day files toward a clearing house, and a position ledger, both derived

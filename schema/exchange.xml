@@ -98,6 +98,11 @@
       <validValue name="UNKNOWN_ORDER">13</validValue>
       <validValue name="QUANTITY_BELOW_EXECUTED">14</validValue>
     </enum>
+    <enum name="AlertKind" encodingType="uint8">
+      <validValue name="WASH_TRADE">0</validValue>
+      <validValue name="SPOOFING">1</validValue>
+      <validValue name="LAYERING">2</validValue>
+    </enum>
     <enum name="RemoveReason" encodingType="uint8">
       <validValue name="CANCELLED">0</validValue>
       <validValue name="REPLACED">1</validValue>
@@ -366,6 +371,20 @@
     <field name="nextSequence" id="1" type="uint64"/>
     <field name="instruments" id="2" type="uint32"/>
     <field name="reserved" id="3" type="uint32"/>
+  </sbe:message>
+
+  <sbe:message name="SurveillanceAlert" id="50" description="A detection over the stream; the sequence range is the case file">
+    <field name="alertId" id="1" type="uint64"/>
+    <!-- The sequence and carried timestamp of the event that completed the pattern. -->
+    <field name="sequence" id="2" type="uint64"/>
+    <field name="timestamp" id="3" type="uint64"/>
+    <field name="executedQuantity" id="4" type="int64"/>
+    <field name="cancelledQuantity" id="5" type="int64"/>
+    <field name="participantId" id="6" type="uint32"/>
+    <field name="instrumentId" id="7" type="uint32"/>
+    <!-- Distinct cancelled price levels inside the window; two or more reads as layering. -->
+    <field name="priceLevels" id="8" type="uint32"/>
+    <field name="kind" id="9" type="AlertKind"/>
   </sbe:message>
 
 </sbe:messageSchema>

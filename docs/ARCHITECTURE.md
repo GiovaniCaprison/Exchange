@@ -41,7 +41,9 @@ never within one, and a partition serves every instrument routed to it from the 
 Downstream consumers derive everything else from the sequenced stream and the event streams: the
 public market data feed, built as its own process in TotalView-ITCH's shape with A and B packet
 feeds, retransmission and snapshot-then-join recovery (Nasdaq, public specifications), private
-execution reports through the gateways, drop copy, and surveillance. Trading states move only on
+execution reports through the gateways, drop copy sessions serving each participant's events to
+the firms responsible for it, and surveillance watching the whole stream for the patterns
+regulation exists to catch, each a process consuming the same events as everyone. Trading states move only on
 SessionControl, and the market operations scheduler is its one sender: the market's clock is a
 consumer with authority, submitting through the same path as everything else. Nothing downstream ever executes inside
 the matcher: a consumer that needs a book builds one from the events, which is also the standing

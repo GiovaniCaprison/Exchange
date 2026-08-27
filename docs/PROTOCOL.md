@@ -101,6 +101,7 @@ aggressed.
 | SessionState | PRE_OPEN 0, OPENING_AUCTION 1, CONTINUOUS 2, CLOSING_AUCTION 3, HALTED 4, CLOSED 5 |
 | RejectReason | NON_POSITIVE_QUANTITY 0, LOT_VIOLATION 1, NON_POSITIVE_PRICE 2, TICK_VIOLATION 3, STATIC_BAND_VIOLATION 4, DYNAMIC_BAND_VIOLATION 5, INVALID_FIELDS 6, MINIMUM_QUANTITY_ABOVE_ORDER 7, DISPLAY_QUANTITY_ABOVE_ORDER 8, MINIMUM_QUANTITY_NOT_MET 9, WOULD_CROSS 10, FILL_OR_KILL_UNFILLABLE 11, STATE_NOT_PERMITTED 12, UNKNOWN_ORDER 13, QUANTITY_BELOW_EXECUTED 14 |
 | RemoveReason | CANCELLED 0, REPLACED 1, MASS_CANCELLED 2, IMMEDIATE_OR_CANCEL_REMAINDER 3, SELF_MATCH_PREVENTED 4 |
+| AlertKind | WASH_TRADE 0, SPOOFING 1, LAYERING 2 |
 
 ## Order semantics
 
@@ -292,6 +293,26 @@ instrument reopens through an auction, because a halted book needs a fair price 
 The shape follows the Limit Up-Limit Down plan (public); the band, its trailing window, the
 pause and the reopening call are configuration. A replayed day reproduces every transition and
 every halt at the same sequences, because the commands are in the journal like everything else.
+
+## The oversight plane
+
+The venue is answerable through two read-only consumers. Drop copy is a session server beside
+the gateway: a firm responsible for a participant logs in over the session plane naming that
+participant as its scope, hears the participant's events framed and implicitly numbered exactly
+as the trading session does, and reconnects by naming the sequence it reached, replayed byte
+exactly from the retained per-scope stream. A drop copy session speaks only the session plane;
+any command poisons it. The shape follows the drop copy services real venues sell (CME Drop
+Copy, public); its purpose is that the client's risk owner hears about the client's doings on a
+channel the client cannot touch.
+
+Surveillance consumes the event stream and emits SurveillanceAlert messages into an alert
+journal in the standard journal format, so a case is a replayable artifact. A wash trade is an
+execution whose aggressor and resting orders share a participant. Spoofing is executed quantity
+on one side answered, within a configured window of stream time, by cancelled resting quantity
+on the other side exceeding a configured multiple of it (the Coscia pattern); when that
+cancelled quantity stood at two or more distinct price levels the alert reads layering instead.
+Every detection is a pure function of the stream, so a replayed day raises the same alerts at
+the same sequences.
 
 ## The public feed
 
