@@ -49,26 +49,29 @@ moves performance by percents and a number whose toolchain is unknown compares t
 
 ## The box
 
-Measurements that mean anything come from one machine: a c6i.metal instance, two sockets of Ice
-Lake x86-64 with 64 physical cores, full performance counter access and an invariant TSC, bare
-metal so no hypervisor sits between the process and the machine. The deployment shape follows the
-hardware: a partition and the rings it touches live on one socket with memory touched first from
+Measurements that mean anything come from one machine: an m5zn.metal instance, two sockets of
+Cascade Lake x86-64 with 24 physical cores at the highest all-core clocks EC2 sells, full
+performance counter access and an invariant TSC, bare metal so no hypervisor sits between the
+process and the machine. The family exists for exactly this workload and the clock is the point:
+a single-threaded hot path converts frequency into latency almost linearly. If the venue ever
+outgrows 24 cores, the wire-to-wire campaign moves to a many-core metal instance and starts its
+numbers fresh, since latency does not compare across microarchitectures. The deployment shape
+follows the hardware: a partition and the rings it touches live on one socket with memory touched first from
 the core that owns it, hyperthread siblings stay idle, interrupts and housekeeping are herded to
 the other socket, and the setup script records what actually took so a manifest can say whether
 the isolation asked for was the isolation received. The rings advise transparent huge
 pages outright and deployment puts them on tmpfs where the kernel can oblige; explicit 2MB and
 1GB pages for the slab remain a campaign question, and so does 128 byte separation of
-write-shared fields, since Ice Lake's L2 spatial prefetcher pulls cache lines in pairs. Off box, a VPC carries no
+write-shared fields, since Intel's L2 spatial prefetcher pulls cache lines in pairs. Off box, a VPC carries no
 native multicast, which touches the packet publication story only when the venue leaves the
 machine.
 
 ## The campaign
 
 The campaign is a process, run start to finish on the box, and every number it produces carries
-the manifest that makes it checkable. Provision a c6i.metal with the current Ubuntu LTS, install
-the toolchain, and record the compiler version: that version is pinned for the campaign's
-duration. Practice runs and rehearsals work identically on any cheaper Intel bare metal
-(m5zn.metal is the highest-clocked and what AWS itself points trading workloads at), because
+the manifest that makes it checkable. Provision the reference box, an m5zn.metal, with the
+current Ubuntu LTS, install the toolchain, and record the compiler version: that version is
+pinned for the campaign's duration. Rehearsals work identically on any Intel bare metal, because
 nothing here names an architecture until `-march=native` reads the machine it stands on and the
 manifest records what it read; the one law is that a campaign's numbers all come from one
 instance type, since latency does not compare across microarchitectures. ARM metal is a

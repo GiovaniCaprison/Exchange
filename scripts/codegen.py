@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """The codegen ritual: the hot path's assembly, read on purpose.
 
-The venue is built for one box, Ice Lake x86-64, so the assembly worth reading is that target's,
-whatever machine this runs on. The script compiles a probe translation unit that explicitly
+The venue is built for one box, today an m5zn.metal's Cascade Lake x86-64, so the assembly worth
+reading is that target's, whatever machine this runs on. The script compiles a probe translation unit that explicitly
 instantiates one matcher partition and one sequencer, each against carriers that cost nothing,
 which forces both hot paths into named symbols with everything below them inlined in. It then
 extracts the chosen functions and reports every call and tail call left inside them, because a
@@ -128,7 +128,7 @@ def main():
     parser.add_argument("--out", default=None, help="where the assembly lands")
     parser.add_argument("--symbol", default="onCommand|onSubmission",
                         help="regex choosing the functions read")
-    parser.add_argument("--march", default="icelake-server", help="the box's architecture")
+    parser.add_argument("--march", default="cascadelake", help="the box's architecture")
     parser.add_argument("--compiler", default="clang++")
     arguments = parser.parse_args()
 

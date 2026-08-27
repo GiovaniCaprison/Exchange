@@ -1,7 +1,7 @@
 #!/bin/sh
-# The measurement box, tuned and verified. Written for a c6i.metal (two sockets of Ice Lake,
-# 64 physical cores, hyperthread siblings 64-127 pairing core N with N+64) and safe on anything
-# close. The campaign's law is that every claim about the environment is checked and recorded,
+# The measurement box, tuned and verified. Written for an m5zn.metal (two sockets of Cascade
+# Lake, 24 physical cores, hyperthread siblings 24-47 pairing core N with N+24) and safe on any
+# Intel bare metal. The campaign's law is that every claim about the environment is checked and recorded,
 # so the check mode prints what actually took and the harnesses' manifests carry the truth
 # either way (docs/PRACTICE.md).
 #
@@ -14,7 +14,7 @@
 # processes are pinned inside it: driver, sequencer, standby, matcher each on their own core,
 # producer and consumer of any one ring on the same socket, siblings left idle.
 
-ISOLATED="${ISOLATED:-32-47}"
+ISOLATED="${ISOLATED:-12-23}"
 
 boot() {
   PARAMETERS="isolcpus=${ISOLATED} nohz_full=${ISOLATED} rcu_nocbs=${ISOLATED}"
