@@ -263,6 +263,7 @@ class Engine {
 
   const Book& book() const { return book_; }
   const Slab& slab() const { return slab_; }
+  const Triggers& triggers() const { return triggers_; }
   std::int32_t sessionState() const { return state_; }
   std::vector<std::int32_t> waitingStops() const {
     std::vector<std::int32_t> all;

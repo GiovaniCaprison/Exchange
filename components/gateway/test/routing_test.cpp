@@ -18,12 +18,14 @@ using exchange::sequencer::test::CapturingLink;
 
 namespace {
 
-using Machine = Gateway<CapturingLink, VirtualClock>;
+using Gate = exchange::risk::Risk<VirtualClock>;
+using Machine = Gateway<CapturingLink, VirtualClock, Gate>;
 
 struct Wired {
   CapturingLink submissions;
   VirtualClock clock;
-  Machine gateway{submissions, clock, 1, {{7, 42}, {8, 43}}};
+  Gate risk{clock, {{7, {}}, {8, {}}}};
+  Machine gateway{submissions, clock, risk, 1, {{7, 42}, {8, 43}}};
 
   int loginAs(const std::uint32_t participant, const std::uint64_t secret) {
     const int slot = gateway.opened();

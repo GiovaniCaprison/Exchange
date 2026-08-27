@@ -8,7 +8,7 @@ target_include_directories(exchange-gateway INTERFACE ${CMAKE_CURRENT_SOURCE_DIR
 # sequencer are how the failover story is proved from the client's chair.
 set(SEQUENCER_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../sequencer/test)
 target_link_libraries(exchange-gateway INTERFACE exchange-protocol exchange-common
-                                                 exchange-sequencer)
+                                                 exchange-sequencer exchange-risk)
 
 add_executable(gateway-session test/session_test.cpp)
 target_include_directories(gateway-session PRIVATE ${SEQUENCER_TEST_DIR})

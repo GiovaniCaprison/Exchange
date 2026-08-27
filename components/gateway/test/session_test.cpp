@@ -21,12 +21,14 @@ using exchange::sequencer::test::CapturingLink;
 
 namespace {
 
-using Machine = Gateway<CapturingLink, VirtualClock>;
+using Gate = exchange::risk::Risk<VirtualClock>;
+using Machine = Gateway<CapturingLink, VirtualClock, Gate>;
 
 struct Wired {
   CapturingLink submissions;
   VirtualClock clock;
-  Machine gateway{submissions, clock, 1, {{7, 42}, {8, 43}}};
+  Gate risk{clock, {{7, {}}, {8, {}}}};
+  Machine gateway{submissions, clock, risk, 1, {{7, 42}, {8, 43}}};
 
   std::vector<std::pair<std::uint16_t, std::vector<char>>> read(const int slot) {
     const auto [bytes, length] = gateway.outbound(slot);
