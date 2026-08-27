@@ -62,6 +62,40 @@ write-shared fields, since Ice Lake's L2 spatial prefetcher pulls cache lines in
 native multicast, which touches the packet publication story only when the venue leaves the
 machine.
 
+## The campaign
+
+The campaign is a process, run start to finish on the box, and every number it produces carries
+the manifest that makes it checkable. Provision a c6i.metal with the current Ubuntu LTS, install
+the toolchain, and record the compiler version: that version is pinned for the campaign's
+duration. Practice runs and rehearsals work identically on any cheaper Intel bare metal
+(m5zn.metal is the highest-clocked and what AWS itself points trading workloads at), because
+nothing here names an architecture until `-march=native` reads the machine it stands on and the
+manifest records what it read; the one law is that a campaign's numbers all come from one
+instance type, since latency does not compare across microarchitectures. ARM metal is a
+different instruction set and no part of the x86 reading applies; virtualised instances have no
+performance counters and a hypervisor's jitter, so they are for correctness only, which the
+deterministic suites pass anywhere. Tune with `scripts/box_setup.sh`: boot mode stages the kernel parameters (isolated
+cores, no tick, shallow C-states), runtime mode sets the governor, disables turbo, enables shmem
+transparent huge pages and herds interrupts onto the housekeeping cores, and check mode prints
+what actually took. Ring files live on /dev/shm, where the rings' huge page advice lands.
+
+Build the flavours, each recorded into every manifest through the build field: the baseline is
+Release with `-march=native`; `EXCHANGE_LTO` adds link time optimisation; `EXCHANGE_PGO`
+generates on one full run and uses on the next; BOLT rewrites the hottest binaries post link
+from a `perf record -j any,u` profile. Then the runs, every process pinned to its own isolated
+core with any one ring's producer and consumer on the same socket. The matcher's cost:
+`flowgen` then `matcher-benchmark`. The sequencer's cost and the price of durability in one
+process: `subgen` then `sequencer-benchmark` under policies none, local and safe. The venue's
+cost as a client feels it: `driver`, the live `sequencer`, and the live `matcher` as separate
+pinned processes, measuring driver write to first answering event, closed loop; run it with the
+sequencer under the local policy, then under safe with the standby process on its own core, and
+the difference between those two runs is the price of safety across real cores. Results
+directories hold the raw series and manifests; `scripts/summarize.py` reads them.
+
+The campaign feeds back into the repository: baselines become budgets, budgets become gates,
+and the codegen ritual's blessed-escape list hardens into a check, so the next change that
+spends what the campaign banked fails a build instead of a retrospective.
+
 ## What may gate
 
 Every merge is gated on the release build, the battery, the sanitizer flavour, the pinned linter
