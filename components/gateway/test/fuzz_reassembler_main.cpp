@@ -1,7 +1,8 @@
 // The fuzz target (docs/components/gateway.md): the same surface the hostile suite feeds with a
 // seed, fed here by a coverage-guided fuzzer with none. It needs a toolchain that ships the
-// libFuzzer runtime, which Linux clang does and Xcode's does not, so it builds under the fuzzer
-// flavour on the box and in ci, where every merge runs a bounded pass:
+// libFuzzer runtime: ci's Linux clang, the box's, or the pinned Homebrew LLVM on a laptop;
+// Xcode's does not carry it. Ci's bounded pass per merge is the gate, and long campaigns run
+// wherever there is time:
 //
 //   cmake -B build-fuzz -DEXCHANGE_FUZZ=ON -DCMAKE_CXX_COMPILER=clang++
 //   cmake --build build-fuzz --target gateway-fuzz

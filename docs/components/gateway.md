@@ -39,7 +39,10 @@ from socket read to sequencer ring write.
 Protocol and doc additions for the session layer; the session state machine with login, replay,
 heartbeats and teardown, tested against scripted disconnections; the translation layer; the
 resubmission-after-failover suite driven by the sequencer's chaos machinery; and the measured
-socket-to-ring hop.
+socket-to-ring hop. The parsers' fuzz arm builds anywhere a clang ships the libFuzzer runtime:
+ci's Linux clang is the gate with a bounded pass per merge, and the pinned Homebrew LLVM runs
+long campaigns on a laptop with
+`cmake -B build-fuzz -DEXCHANGE_FUZZ=ON -DCMAKE_CXX_COMPILER=$(brew --prefix llvm)/bin/clang++`.
 
 ## Where to learn
 
