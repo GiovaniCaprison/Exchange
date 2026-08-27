@@ -309,7 +309,8 @@ Surveillance consumes the event stream and emits SurveillanceAlert messages into
 journal in the standard journal format, so a case is a replayable artifact. A wash trade is an
 execution whose aggressor and resting orders share a participant. Spoofing is executed quantity
 on one side answered, within a configured window of stream time, by cancelled resting quantity
-on the other side exceeding a configured multiple of it (the Coscia pattern); when that
+on the other side exceeding both a configured multiple of it and an absolute floor (the Coscia
+pattern); when that
 cancelled quantity stood at two or more distinct price levels the alert reads layering instead.
 Every detection is a pure function of the stream, so a replayed day raises the same alerts at
 the same sequences.

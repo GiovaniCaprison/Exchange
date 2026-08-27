@@ -71,6 +71,13 @@ in Avellaneda and Stoikov's shape, noise takers, and a momentum chaser, every on
 of the stream and a seed, so a simulated day driven twice is the same day, journals included. Its
 design and its proofs live in `components/ecosystem/`.
 
+Oversight is the venue answerable: drop copy sessions serving each participant's events byte
+exactly to the firms responsible for it, on a read-only channel a command poisons, and
+surveillance watching the whole stream for wash trades, spoofing and layering, every detection a
+pure function of the stream so a replayed day raises the same alerts at the same sequences, with
+cases landing in a replayable alert journal. Its design and its proofs live in
+`components/oversight/`.
+
 ## Build
 
 Requires CMake and a C++23 compiler.
