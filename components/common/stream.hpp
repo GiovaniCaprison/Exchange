@@ -97,8 +97,15 @@ class PacketSource {
     }
     epoch_ = reader.epoch();
     if (reader.firstSequence() > next_) {
-      // The gap comes first: nothing here is deliverable until the rewinder fills it.
-      rewind_.request(next_, static_cast<std::uint32_t>(reader.firstSequence() - next_));
+      // The gap comes first: nothing here is deliverable until the rewinder fills it. The same
+      // gap is asked for once, not once per twin that reveals it: A and B carry the same
+      // packets, so the packet after a shared loss arrives twice, and a polite consumer does
+      // not hammer the rewinder for what it already requested.
+      if (next_ != askedFrom_ || reader.firstSequence() != askedTo_) {
+        rewind_.request(next_, static_cast<std::uint32_t>(reader.firstSequence() - next_));
+        askedFrom_ = next_;
+        askedTo_ = reader.firstSequence();
+      }
       if (mayPark && !reader.heartbeat()) {
         parked_.emplace_back(bytes, bytes + length);
       }
@@ -117,6 +124,8 @@ class PacketSource {
   }
 
   std::uint64_t next_;
+  std::uint64_t askedFrom_ = 0;
+  std::uint64_t askedTo_ = 0;
   std::uint32_t epoch_;
   Rewind& rewind_;
   std::vector<std::vector<char>> parked_;
