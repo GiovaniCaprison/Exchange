@@ -131,6 +131,7 @@ struct NaiveBook {
   // Canonical form: (instrument, side, priority price order, arrival) with id, price, quantity.
   std::vector<std::tuple<std::uint64_t, std::int64_t, std::int64_t>> canonical() const {
     std::vector<const std::pair<const std::uint64_t, Order>*> sorted;
+    sorted.reserve(orders.size());
     for (const auto& entry : orders) {
       sorted.push_back(&entry);
     }
@@ -148,6 +149,7 @@ struct NaiveBook {
       return a->second.arrival < b->second.arrival;
     });
     std::vector<std::tuple<std::uint64_t, std::int64_t, std::int64_t>> out;
+    out.reserve(sorted.size());
     for (const auto* entry : sorted) {
       out.emplace_back(entry->first, entry->second.price, entry->second.quantity);
     }

@@ -133,9 +133,12 @@ int main(const int count, char** values) {
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = htons(static_cast<std::uint16_t>(std::stoi(rewindPort)));
-    ::bind(rewind, reinterpret_cast<const sockaddr*>(&address), sizeof address);
     const int flags = 1;
     ::setsockopt(rewind, SOL_SOCKET, SO_REUSEADDR, &flags, sizeof flags);
+    if (::bind(rewind, reinterpret_cast<const sockaddr*>(&address), sizeof address) != 0) {
+      std::fprintf(stderr, "cannot bind the rewind port %s\n", rewindPort.c_str());
+      return 2;
+    }
   }
   int glimpse = -1;
   if (!glimpsePort.empty()) {
@@ -146,8 +149,11 @@ int main(const int count, char** values) {
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = htons(static_cast<std::uint16_t>(std::stoi(glimpsePort)));
-    ::bind(glimpse, reinterpret_cast<const sockaddr*>(&address), sizeof address);
-    ::listen(glimpse, 4);
+    if (::bind(glimpse, reinterpret_cast<const sockaddr*>(&address), sizeof address) != 0 ||
+        ::listen(glimpse, 4) != 0) {
+      std::fprintf(stderr, "cannot listen on the glimpse port %s\n", glimpsePort.c_str());
+      return 2;
+    }
   }
 
   std::signal(SIGINT, onSignal);
