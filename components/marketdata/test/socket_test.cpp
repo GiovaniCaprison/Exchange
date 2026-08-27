@@ -71,18 +71,35 @@ TEST_CASE("the process serves packets on its feeds and snapshots to late joiners
     events.publish();
   });
 
-  // A packet arrives on the A feed.
+  // Packets arrive on the A feed; wait for the process to finish digesting the ring, read as
+  // the feed's watermark going quiet, before a late joiner asks for the book. The sanitizer
+  // flavour is slow enough to lose this race otherwise, which is exactly what the wait models:
+  // a joiner connecting mid-digestion gets a smaller book, a correct one, and the test wants
+  // the settled one.
   char packet[2048];
-  long got = -1;
-  for (int attempt = 0; attempt < 300 && got <= 0; attempt++) {
-    got = ::recv(listenerA, packet, sizeof packet, MSG_DONTWAIT);
-    if (got <= 0) {
-      ::usleep(10'000);
+  std::uint64_t watermark = 0;
+  bool heard = false;
+  int quiet = 0;
+  for (int attempt = 0; attempt < 2000 && quiet < 30; attempt++) {
+    const long got = ::recv(listenerA, packet, sizeof packet, MSG_DONTWAIT);
+    if (got > 0) {
+      heard = true;
+      common::ranges::Reader reader(packet, static_cast<std::size_t>(got));
+      CHECK(reader.epoch() == 1);
+      const std::uint64_t upTo = reader.firstSequence() + reader.count();
+      if (!reader.endOfSession() && !reader.heartbeat() && upTo > watermark) {
+        watermark = upTo;
+        quiet = 0;
+        continue;
+      }
     }
+    if (heard) {
+      quiet++;
+    }
+    ::usleep(10'000);
   }
-  REQUIRE(got > 0);
-  common::ranges::Reader reader(packet, static_cast<std::size_t>(got));
-  CHECK(reader.epoch() == 1);
+  REQUIRE(heard);
+  REQUIRE(watermark > 10);
 
   // The late joiner connects and receives the snapshot, closed by the join sequence.
   int joiner = -1;
