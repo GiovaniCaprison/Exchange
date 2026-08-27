@@ -281,6 +281,18 @@ journals hold the record, recovery is the next session started fresh, and gatewa
 at the boundary, which is the deployment real venues run; MoldUDP64's session name is that
 boundary made visible on the wire.
 
+## The market's clock
+
+SessionControl enters the sequence from exactly one place: the operations process, a consumer
+with authority that reads the same stream as everyone and can only act by submitting commands on
+its own gateway carrier, which take effect when sequenced. It owns the calendar, pre-open
+through the closing auction to the close, and it owns halts: an instrument whose print lands
+outside a configured band around the trailing mean of its own executions is halted, and a halted
+instrument reopens through an auction, because a halted book needs a fair price to restart from.
+The shape follows the Limit Up-Limit Down plan (public); the band, its trailing window, the
+pause and the reopening call are configuration. A replayed day reproduces every transition and
+every halt at the same sequences, because the commands are in the journal like everything else.
+
 ## The public feed
 
 What the world sees is derived: a builder consumes the matcher's events and publishes the public
