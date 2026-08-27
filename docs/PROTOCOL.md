@@ -100,14 +100,16 @@ aggressed.
 | Allocation | PRICE_TIME 0, PRO_RATA 1 |
 | SessionState | PRE_OPEN 0, OPENING_AUCTION 1, CONTINUOUS 2, CLOSING_AUCTION 3, HALTED 4, CLOSED 5 |
 | RejectReason | NON_POSITIVE_QUANTITY 0, LOT_VIOLATION 1, NON_POSITIVE_PRICE 2, TICK_VIOLATION 3, STATIC_BAND_VIOLATION 4, DYNAMIC_BAND_VIOLATION 5, INVALID_FIELDS 6, MINIMUM_QUANTITY_ABOVE_ORDER 7, DISPLAY_QUANTITY_ABOVE_ORDER 8, MINIMUM_QUANTITY_NOT_MET 9, WOULD_CROSS 10, FILL_OR_KILL_UNFILLABLE 11, STATE_NOT_PERMITTED 12, UNKNOWN_ORDER 13, QUANTITY_BELOW_EXECUTED 14 |
-| RemoveReason | CANCELLED 0, REPLACED 1, MASS_CANCELLED 2, IMMEDIATE_OR_CANCEL_REMAINDER 3, SELF_MATCH_PREVENTED 4 |
+| RemoveReason | CANCELLED 0, REPLACED 1, MASS_CANCELLED 2, IMMEDIATE_OR_CANCEL_REMAINDER 3, SELF_MATCH_PREVENTED 4, EXPIRED 5 |
 | AlertKind | WASH_TRADE 0, SPOOFING 1, LAYERING 2 |
 
 ## Order semantics
 
 Prices and quantities are scaled integers (P-11); priceScale on the instrument names the implied
 decimal places. A limit order's unmatched remainder rests at its price under GOOD_TILL_CANCEL or
-DAY; an IMMEDIATE_OR_CANCEL remainder is removed; a FILL_OR_KILL order executes in full on entry
+DAY, and the close expires everything resting or waiting under DAY with the reason EXPIRED, in
+arrival order, while GOOD_TILL_CANCEL stands for tomorrow through the snapshot; an
+IMMEDIATE_OR_CANCEL remainder is removed; a FILL_OR_KILL order executes in full on entry
 or is refused whole; a market order never rests. A post-only order never takes liquidity and is
 refused if it would. An order carrying minQuantity executes at least that much on entry or is
 refused without executing.

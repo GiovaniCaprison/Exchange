@@ -117,6 +117,15 @@ class Book {
     }
   }
 
+  void all(std::vector<std::int32_t>& into) const {
+    for (std::size_t at = 0; at <= nameMask_; at++) {
+      const std::uint64_t entry = names_[(at << 1) + 1];
+      if (static_cast<std::int32_t>(entry >> 32) != 0) {
+        into.push_back(static_cast<std::int32_t>(entry >> 32));
+      }
+    }
+  }
+
   // How much a taker could fill, summed over crossing levels only. With no self match id in play
   // the cached totals answer without touching an order; with one, the queues are walked, since
   // the exclusion is per order.

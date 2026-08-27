@@ -68,6 +68,13 @@ class Triggers {
     }
   }
 
+  void all(std::vector<std::int32_t>& into) const {
+    for (std::int32_t slot = head_; slot != 0;
+         slot = static_cast<std::int32_t>(slab_.hot(slot).next)) {
+      into.push_back(slot);
+    }
+  }
+
   // Moves the stops the last executed price has reached into the caller's queue, earliest first,
   // removed as they go.
   void fire(const std::int64_t lastExecutedPrice, std::vector<std::int32_t>& into) {

@@ -1,0 +1,21 @@
+# The close is the end of the session a DAY order lives in: everything resting or waiting under
+# DAY expires with its own reason, in arrival order, and GOOD_TILL_CANCEL stands for tomorrow.
+INSTRUMENT tick=5 lot=1 min=1 max=1000000 band=500 open=100000 alloc=PRICE_TIME
+SESSION CONTINUOUS
+STATE CONTINUOUS
+NEW BUY LIMIT DAY 99990 20 #1
+ACCEPTED #1 order=1
+RESTED order=1 BUY 99990 20
+NEW BUY LIMIT GTC 99985 15 #2
+ACCEPTED #2 order=2
+RESTED order=2 BUY 99985 15
+NEW SELL LIMIT DAY 100010 10 #3
+ACCEPTED #3 order=3
+RESTED order=3 SELL 100010 10
+NEW SELL LIMIT DAY 100050 5 trigger=100040 #4
+ACCEPTED #4 order=4
+SESSION CLOSED
+STATE CLOSED
+REMOVED order=1 20 EXPIRED
+REMOVED order=3 10 EXPIRED
+REMOVED order=4 5 EXPIRED
