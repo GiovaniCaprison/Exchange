@@ -45,8 +45,6 @@ toolchain policy and the box itself, are the standing document [PRACTICE.md](../
 The standing documents stay finished-state, so each component's arrival rewrites them rather than
 appending futures to them. The ledger of what to touch:
 
-- risk: PROTOCOL.md gains the risk refusal reasons and where they sit in precedence;
-  ARCHITECTURE.md's boundary section names the risk layer's position.
 - operations: PROTOCOL.md gains halt semantics beyond the session states if any are added;
   ARCHITECTURE.md gains the scheduler as the sender of SessionControl.
 - ecosystem: README.md gains the run-a-venue quickstart; METHODOLOGY-style content lands with the

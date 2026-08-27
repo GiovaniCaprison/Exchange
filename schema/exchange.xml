@@ -55,6 +55,14 @@
     <set name="OrderFlags" encodingType="uint8">
       <choice name="postOnly">0</choice>
     </set>
+    <enum name="RiskRefusal" encodingType="uint8">
+      <validValue name="RATE_LIMIT">0</validValue>
+      <validValue name="MAX_ORDER_SIZE">1</validValue>
+      <validValue name="MAX_NOTIONAL">2</validValue>
+      <validValue name="DUPLICATE">3</validValue>
+      <validValue name="PRICE_COLLAR">4</validValue>
+      <validValue name="CREDIT">5</validValue>
+    </enum>
     <enum name="LoginRefusal" encodingType="uint8">
       <validValue name="BAD_CREDENTIAL">0</validValue>
       <validValue name="UNKNOWN_PARTICIPANT">1</validValue>
@@ -295,6 +303,11 @@
 
   <sbe:message name="SessionEnded" id="35" description="The gateway's last word on a session, clean or not">
     <field name="reserved" id="1" type="uint64"/>
+  </sbe:message>
+
+  <sbe:message name="CommandRefused" id="36" description="The gate's answer when risk says no: the command never reached the venue">
+    <field name="clientOrderId" id="1" type="uint64"/>
+    <field name="reason" id="2" type="RiskRefusal"/>
   </sbe:message>
 
   <sbe:message name="AuctionIndicative" id="18" description="Uncrossing price and volume if the auction ran now">
