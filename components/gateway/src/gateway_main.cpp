@@ -34,6 +34,7 @@
 #include <string>
 #include <vector>
 
+#include "broadcast_ring.hpp"
 #include "clock.hpp"
 #include "gateway.hpp"
 #include "spsc_ring.hpp"
@@ -96,6 +97,20 @@ common::SpscRing attachPatiently(const std::string& path) {
   throw std::runtime_error("gave up waiting for " + path);
 }
 
+// The event stream is a broadcast ring: this gateway holds one seat among the feed's readers.
+common::BroadcastReader joinPatiently(const std::string& path) {
+  for (int attempt = 0; attempt < 300; attempt++) {
+    if (std::filesystem::exists(path)) {
+      try {
+        return common::BroadcastReader::attach(path);
+      } catch (const std::exception&) {
+      }
+    }
+    ::usleep(100'000);
+  }
+  throw std::runtime_error("gave up waiting for " + path);
+}
+
 }  // namespace
 
 int main(const int count, char** values) {
@@ -116,7 +131,7 @@ int main(const int count, char** values) {
 
   common::SpscRing submissions = common::SpscRing::create(submissionsPath, 1 << 22);
   common::SpscRing acks = attachPatiently(acksPath);
-  common::SpscRing events = attachPatiently(eventsPath);
+  common::BroadcastReader events = joinPatiently(eventsPath);
   exchange::sequencer::WallClock clock;
   // One limits shape for every participant until the operations phase brings real config; the
   // defaults are permissive and the flag overrides them venue wide.

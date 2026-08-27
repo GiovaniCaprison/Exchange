@@ -30,6 +30,7 @@
 #endif
 #include <sys/utsname.h>
 
+#include "broadcast_ring.hpp"
 #include "exchange_protocol/CommandSequenced.h"
 #include "exchange_protocol/InstrumentDefinition.h"
 #include "exchange_protocol/MessageHeader.h"
@@ -127,7 +128,19 @@ int main(const int count, char** values) {
 
   common::SpscRing gateway = common::SpscRing::create(gatewayPath, 1 << 22);
   common::SpscRing acks = attachPatiently(acksPath);
-  common::SpscRing events = attachPatiently(eventsPath);
+  // The matcher's events broadcast; the driver holds one seat among the readers.
+  common::BroadcastReader events = [&] {
+    for (int attempt = 0; attempt < 300; attempt++) {
+      if (std::filesystem::exists(eventsPath)) {
+        try {
+          return common::BroadcastReader::attach(eventsPath);
+        } catch (const std::exception&) {
+        }
+      }
+      ::usleep(100'000);
+    }
+    throw std::runtime_error("gave up waiting for " + eventsPath);
+  }();
 
   // Closed loop: write submission k, then poll until the stream has answered it. The
   // acknowledgment carries the (gatewaySequence, sequence) mapping; events carry the input

@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "broadcast_ring.hpp"
 #include "exchange_protocol/MessageHeader.h"
 #include "journal.hpp"
 #include "partition.hpp"
@@ -124,9 +125,11 @@ int replay(const std::string& journalPath, const std::string& eventsPath,
 
 int live(const std::string& inPath, const std::string& outPath, const std::string& journalPath,
          const std::string& restorePath, const std::string& snapshotPath) {
-  common::SpscRing out = common::SpscRing::create(outPath, 1 << 24);
+  // Events broadcast: the gateway, the market data publisher and the operations scheduler all
+  // read this ring, each on its own seat, none of them able to stall the matcher.
+  common::BroadcastRing out = common::BroadcastRing::create(outPath, 1 << 24);
   common::SpscRing in = common::SpscRing::attach(inPath);
-  matching::Partition<common::SpscRing> partition(out);
+  matching::Partition<common::BroadcastRing> partition(out);
   std::uint64_t from = 0;
   if (!restorePath.empty()) {
     from = common::snapshot::restore(restorePath, partition);
