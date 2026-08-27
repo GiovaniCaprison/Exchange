@@ -45,8 +45,6 @@ toolchain policy and the box itself, are the standing document [PRACTICE.md](../
 The standing documents stay finished-state, so each component's arrival rewrites them rather than
 appending futures to them. The ledger of what to touch:
 
-- marketdata: PROTOCOL.md gains the public feed message set and the snapshot service;
-  ARCHITECTURE.md's downstream paragraph names the built feed rather than the convention alone.
 - risk: PROTOCOL.md gains the risk refusal reasons and where they sit in precedence;
   ARCHITECTURE.md's boundary section names the risk layer's position.
 - operations: PROTOCOL.md gains halt semantics beyond the session states if any are added;

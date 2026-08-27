@@ -39,8 +39,9 @@ paper, LMAX). Symbols are partitioned across matchers, so concurrency exists bet
 never within one, and a partition serves every instrument routed to it from the one thread.
 
 Downstream consumers derive everything else from the sequenced stream and the event streams: the
-public market data feed (the convention follows TotalView-ITCH, Nasdaq, public specification),
-private execution reports, drop copy, and surveillance. Nothing downstream ever executes inside
+public market data feed, built as its own process in TotalView-ITCH's shape with A and B packet
+feeds, retransmission and snapshot-then-join recovery (Nasdaq, public specifications), private
+execution reports through the gateways, drop copy, and surveillance. Nothing downstream ever executes inside
 the matcher: a consumer that needs a book builds one from the events, which is also the standing
 proof that the event stream is sufficient to rebuild the state it describes.
 

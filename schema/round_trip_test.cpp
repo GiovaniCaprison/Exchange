@@ -28,6 +28,8 @@
 #include "exchange_protocol/OrderRemoved.h"
 #include "exchange_protocol/OrderRested.h"
 #include "exchange_protocol/OrderTriggered.h"
+#include "exchange_protocol/PublicOrderAdded.h"
+#include "exchange_protocol/PublicTopOfBook.h"
 #include "exchange_protocol/RangeHeader.h"
 #include "exchange_protocol/ReplaceOrder.h"
 #include "exchange_protocol/ReplicationAck.h"
@@ -36,6 +38,7 @@
 #include "exchange_protocol/SessionEnded.h"
 #include "exchange_protocol/SessionHeartbeat.h"
 #include "exchange_protocol/SessionStateChanged.h"
+#include "exchange_protocol/SnapshotComplete.h"
 
 using namespace exchange::protocol;
 
@@ -66,6 +69,38 @@ TEST_CASE("the contexts and carrier prefixes hold the sizes the protocol documen
   CHECK(EventContext::encodedLength() == 32);
   CHECK(MessageHeader::encodedLength() + GatewaySubmission::sbeBlockLength() == 24);
   CHECK(MessageHeader::encodedLength() + RangeHeader::sbeBlockLength() == 24);
+}
+
+TEST_CASE("the public feed round trips and can say nothing private") {
+  std::vector<char> space(256);
+  {
+    auto out = encoded<PublicOrderAdded>(space);
+    out.context().timestamp(9).instrumentId(1).reserved(0);
+    out.orderId(41).price(1000).quantity(5);
+    out.side(Side::BUY);
+    auto in = decoded<PublicOrderAdded>(space);
+    CHECK(in.orderId() == 41);
+    CHECK(in.price() == 1000);
+    CHECK(in.quantity() == 5);
+    CHECK(in.context().timestamp() == 9);
+  }
+  {
+    auto out = encoded<PublicTopOfBook>(space);
+    out.context().timestamp(9).instrumentId(1).reserved(0);
+    out.bidPrice(995).bidQuantity(7).askPrice(1005).askQuantity(3);
+    auto in = decoded<PublicTopOfBook>(space);
+    CHECK(in.bidPrice() == 995);
+    CHECK(in.askQuantity() == 3);
+  }
+  {
+    auto out = encoded<SnapshotComplete>(space);
+    out.nextSequence(4242).instruments(2).reserved(0);
+    auto in = decoded<SnapshotComplete>(space);
+    CHECK(in.nextSequence() == 4242);
+    CHECK(in.instruments() == 2);
+  }
+  // The privacy claim is structural: the public context has no room for attribution.
+  CHECK(PublicContext::encodedLength() == 16);
 }
 
 TEST_CASE("the session plane round trips") {
