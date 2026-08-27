@@ -1,8 +1,10 @@
-// The gateway process: sockets outside, the machine inside. One poll(2) loop owns the listener,
-// every connection, and the venue's rings, which is the portable statement of the single-threaded
-// event loop; epoll and io_uring are the same shape with cheaper syscalls and arrive with the
-// box work (docs/components/gateway.md). TCP_NODELAY because a venue never trades latency for
-// batching a client did not ask for.
+// The gateway process: sockets outside, the machine inside. One event loop owns the listener,
+// every connection, and the venue's rings: on Linux the loop is epoll, level triggered with
+// nonblocking sockets, which is the edge real order entry runs; elsewhere the same shape runs on
+// poll(2), and ci exercising the socket suite on Linux is what keeps the epoll path honest.
+// io_uring is the same edge again with batched syscalls and stays a named upgrade in the
+// component page. TCP_NODELAY because a venue never trades latency for batching a client did
+// not ask for.
 //
 //   gateway --listen PORT --submissions RING --acks RING --events RING
 //           --participants ID:SECRET[,ID:SECRET...] [--gateway-id N] [--once]
@@ -13,12 +15,17 @@
 // which is what lets an integration test hold the whole process to its word.
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/epoll.h>
+#endif
 
+#include <cerrno>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -138,6 +145,97 @@ int main(const int count, char** values) {
   }
   char scratch[1 << 16];
 
+  // The loop's verbs, shared by both waiting mechanisms.
+  const auto acceptOne = [&]() -> int {
+    const int accepted = ::accept(listener, nullptr, nullptr);
+    if (accepted < 0) {
+      return -1;
+    }
+    const int nodelay = 1;
+    ::setsockopt(accepted, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof nodelay);
+    ::fcntl(accepted, F_SETFL, ::fcntl(accepted, F_GETFL, 0) | O_NONBLOCK);
+    const int slot = gateway.opened();
+    if (slot < 0) {
+      ::close(accepted);
+      return -1;
+    }
+    sockets[slot] = accepted;
+    return slot;
+  };
+  const auto readable = [&](const int slot) {
+    const long got = ::read(sockets[slot], scratch, sizeof scratch);
+    if (got == 0 || (got < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
+      ::close(sockets[slot]);
+      sockets[slot] = -1;
+      gateway.closed(slot);
+      return;
+    }
+    if (got > 0) {
+      gateway.received(slot, scratch, static_cast<std::size_t>(got));
+    }
+  };
+  const auto writable = [&](const int slot) {
+    const auto [bytes, length] = gateway.outbound(slot);
+    if (length > 0) {
+      const long wrote = ::write(sockets[slot], bytes, length);
+      if (wrote > 0) {
+        gateway.drained(slot, static_cast<std::size_t>(wrote));
+      }
+    }
+  };
+  const auto sweep = [&] {
+    for (std::size_t slot = 0; slot < SLOTS; slot++) {
+      if (sockets[slot] >= 0 && gateway.wantsClose(static_cast<int>(slot))) {
+        ::close(sockets[slot]);
+        sockets[slot] = -1;
+        gateway.closed(static_cast<int>(slot));
+        if (once) {
+          stopped = 1;
+        }
+      }
+    }
+    acks.poll([&](char* message, const std::size_t length) { gateway.onAck(message, length); });
+    events.poll([&](char* message, const std::size_t length) { gateway.onEvent(message, length); });
+    gateway.onTick();
+  };
+
+#if defined(__linux__)
+  // Level-triggered epoll over nonblocking sockets: readiness wakes the loop, writes are
+  // attempted for whoever holds outbound bytes, and EAGAIN is a stalled client's problem
+  // bounded by its own buffer cap rather than the loop's.
+  const int waiter = ::epoll_create1(0);
+  epoll_event interest{};
+  interest.events = EPOLLIN;
+  interest.data.fd = listener;
+  ::epoll_ctl(waiter, EPOLL_CTL_ADD, listener, &interest);
+  while (stopped == 0) {
+    epoll_event woke[SLOTS + 1];
+    const int ready = ::epoll_wait(waiter, woke, SLOTS + 1, 10);
+    for (int at = 0; at < ready; at++) {
+      if (woke[at].data.fd == listener) {
+        const int slot = acceptOne();
+        if (slot >= 0) {
+          epoll_event watch{};
+          watch.events = EPOLLIN;
+          watch.data.u64 = 0x100000000ULL | static_cast<std::uint64_t>(slot);
+          ::epoll_ctl(waiter, EPOLL_CTL_ADD, sockets[slot], &watch);
+        }
+      } else {
+        const int slot = static_cast<int>(woke[at].data.u64 & 0xFFFFFFFFULL);
+        if (sockets[slot] >= 0) {
+          readable(slot);
+        }
+      }
+    }
+    for (std::size_t slot = 0; slot < SLOTS; slot++) {
+      if (sockets[slot] >= 0) {
+        writable(static_cast<int>(slot));
+      }
+    }
+    sweep();
+  }
+  ::close(waiter);
+#else
   while (stopped == 0) {
     pollfd polled[SLOTS + 1];
     polled[0] = {listener, POLLIN, 0};
@@ -153,61 +251,21 @@ int main(const int count, char** values) {
       }
     }
     ::poll(polled, entries, 10);
-
     if ((polled[0].revents & POLLIN) != 0) {
-      const int accepted = ::accept(listener, nullptr, nullptr);
-      if (accepted >= 0) {
-        const int nodelay = 1;
-        ::setsockopt(accepted, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof nodelay);
-        const int slot = gateway.opened();
-        if (slot >= 0) {
-          sockets[slot] = accepted;
-        } else {
-          ::close(accepted);
-        }
-      }
+      acceptOne();
     }
-
     for (nfds_t at = 1; at < entries; at++) {
       const int slot = slotOf[at];
       if ((polled[at].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
-        const long got = ::read(sockets[slot], scratch, sizeof scratch);
-        if (got <= 0) {
-          ::close(sockets[slot]);
-          sockets[slot] = -1;
-          gateway.closed(slot);
-          continue;
-        }
-        gateway.received(slot, scratch, static_cast<std::size_t>(got));
+        readable(slot);
       }
-      if ((polled[at].revents & POLLOUT) != 0) {
-        const auto [bytes, length] = gateway.outbound(slot);
-        if (length > 0) {
-          const long wrote = ::write(sockets[slot], bytes, length);
-          if (wrote > 0) {
-            gateway.drained(slot, static_cast<std::size_t>(wrote));
-          }
-        }
+      if (sockets[slot] >= 0 && (polled[at].revents & POLLOUT) != 0) {
+        writable(slot);
       }
     }
-
-    for (std::size_t slot = 0; slot < SLOTS; slot++) {
-      if (sockets[slot] >= 0) {
-        if (gateway.wantsClose(static_cast<int>(slot))) {
-          ::close(sockets[slot]);
-          sockets[slot] = -1;
-          gateway.closed(static_cast<int>(slot));
-          if (once) {
-            stopped = 1;
-          }
-        }
-      }
-    }
-
-    acks.poll([&](char* message, const std::size_t length) { gateway.onAck(message, length); });
-    events.poll([&](char* message, const std::size_t length) { gateway.onEvent(message, length); });
-    gateway.onTick();
+    sweep();
   }
+#endif
   ::close(listener);
   return 0;
 }
