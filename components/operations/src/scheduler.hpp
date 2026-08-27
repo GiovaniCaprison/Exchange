@@ -46,6 +46,14 @@ struct Config {
   std::uint64_t auctionNanos = 15'000'000'000ULL;
   std::uint32_t gatewayId = 90;
   std::uint64_t resubmitAfterNanos = 500'000'000ULL;
+  // The market-wide circuit breaker, NYSE Rule 7.12's shape: declines in a reference instrument
+  // from the session's first print, in basis points. Levels one and two each fire once per
+  // session and pause every instrument; level three closes the day. Zero disables it.
+  std::uint32_t breakerInstrument = 0;
+  std::int64_t breakerLevel1Bps = 700;
+  std::int64_t breakerLevel2Bps = 1'300;
+  std::int64_t breakerLevel3Bps = 2'000;
+  std::uint64_t breakerHaltNanos = 900'000'000'000ULL;
 };
 
 template <typename SubmitRing, typename Clock>
@@ -76,8 +84,13 @@ class Scheduler {
       const sbe::SessionState::Value state = config_.calendar[nextTransition_].state;
       for (Instrument& instrument : instruments_) {
         submit(instrument.id, state);
-        // The calendar outranks the halt machine.
+        // The calendar outranks the halt machine, the market-wide breaker included, because
+        // tomorrow is a calendar event.
         instrument.phase = Phase::TRADING;
+      }
+      if (state == sbe::SessionState::PRE_OPEN) {
+        breakerAnchor_ = 0;
+        breakerFired_ = 0;
       }
       nextTransition_++;
     }
@@ -167,6 +180,40 @@ class Scheduler {
     const std::uint64_t when = event.context().timestamp();
     const std::int64_t price = event.price();
 
+    // The market-wide breaker first: a deep enough decline in the reference instrument from the
+    // session's first print pauses everything, and the deepest closes the day, so the
+    // single-instrument band never argues with it.
+    if (config_.breakerInstrument != 0 &&
+        event.context().instrumentId() == config_.breakerInstrument) {
+      if (breakerAnchor_ == 0) {
+        breakerAnchor_ = price;
+      } else if (breakerAnchor_ > price) {
+        const std::int64_t decline = (breakerAnchor_ - price) * 10'000 / breakerAnchor_;
+        if (decline >= config_.breakerLevel3Bps && breakerFired_ < 3) {
+          breakerFired_ = 3;
+          breaks_++;
+          for (Instrument& everyone : instruments_) {
+            submit(everyone.id, sbe::SessionState::CLOSED);
+            everyone.phase = Phase::TRADING;
+          }
+          return;
+        }
+        const bool levelTwo = decline >= config_.breakerLevel2Bps && breakerFired_ < 2;
+        const bool levelOne = decline >= config_.breakerLevel1Bps && breakerFired_ < 1;
+        if (levelTwo || levelOne) {
+          breakerFired_ = levelTwo ? 2 : 1;
+          breaks_++;
+          for (Instrument& everyone : instruments_) {
+            if (everyone.phase == Phase::TRADING &&
+                everyone.confirmed == sbe::SessionState::CONTINUOUS) {
+              halt(everyone, config_.breakerHaltNanos);
+            }
+          }
+          return;
+        }
+      }
+    }
+
     // The reference is the trailing mean at stream time, LULD's shape; the print that breaches
     // the band halts its instrument, judged against the reference that stood before it.
     evict(*instrument, when);
@@ -190,6 +237,8 @@ class Scheduler {
   std::uint64_t acked() const { return ackedUpTo_; }
   std::uint64_t resubmitted() const { return resubmitted_; }
   std::uint64_t halts() const { return halts_; }
+  std::uint64_t breaks() const { return breaks_; }
+  std::uint32_t breakerLevel() const { return breakerFired_; }
 
  private:
   enum class Phase : std::uint8_t { TRADING, HALTED, REOPENING };
@@ -216,10 +265,12 @@ class Scheduler {
     return nullptr;
   }
 
-  void halt(Instrument& instrument) {
+  void halt(Instrument& instrument) { halt(instrument, config_.haltNanos); }
+
+  void halt(Instrument& instrument, const std::uint64_t pauseNanos) {
     submit(instrument.id, sbe::SessionState::HALTED);
     instrument.phase = Phase::HALTED;
-    instrument.phaseUntil = clock_.now() + config_.haltNanos;
+    instrument.phaseUntil = clock_.now() + pauseNanos;
     // The band restarts from the reopening print rather than the panic before it.
     instrument.printHead = 0;
     instrument.printCount = 0;
@@ -318,6 +369,9 @@ class Scheduler {
   std::uint64_t lastAck_ = 0;
   std::uint64_t resubmitted_ = 0;
   std::uint64_t halts_ = 0;
+  std::int64_t breakerAnchor_ = 0;
+  std::uint32_t breakerFired_ = 0;
+  std::uint64_t breaks_ = 0;
 };
 
 }  // namespace exchange::operations
