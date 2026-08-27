@@ -258,6 +258,28 @@ journals hold the record, recovery is the next session started fresh, and gatewa
 at the boundary, which is the deployment real venues run; MoldUDP64's session name is that
 boundary made visible on the wire.
 
+## The public feed
+
+What the world sees is derived: a builder consumes the matcher's events and publishes the public
+vocabulary, messages 40 through 47, each opening with the public context, timestamp and
+instrument and nothing else, so the feed structurally cannot carry attribution rather than
+merely choosing to strip it. The mapping is the consumer rules made public: a rested order is
+added, an execution names each book order it reduced with its price and quantity, a reduction
+names the new displayed quantity, a removal deletes, and trading states and auction indications
+pass through; acceptances and refusals are private to their sessions and never appear. The feed
+renumbers onto its own sequence, carried by its ranges the way every stream here carries one,
+and travels as the same MoldUDP64-shaped packets on two identical feeds, A and B, so a consumer
+takes whichever packet arrives first and single-packet loss costs nothing; what both feeds lose
+the retransmission server replays by range. The shape follows TotalView-ITCH and the delivery
+follows MoldUDP64 (Nasdaq, public specifications).
+
+A late joiner recovers by snapshot: the current visible book as a sequence of PublicOrderAdded
+messages per instrument, in queue priority order so replaying them rebuilds not just the shape
+of the book but its fairness, preceded by each instrument's trading state and closed by
+SnapshotComplete naming the feed sequence to join live at, Glimpse's shape (Nasdaq, public
+specification). A conflated top of book derives from the same builder on an interval, because
+most consumers want the touch and full depth is the price of the few who want everything.
+
 ## The ring
 
 On-box transport is a single-producer single-consumer ring over a mapped file. Records are eight

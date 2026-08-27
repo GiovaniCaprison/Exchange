@@ -22,6 +22,12 @@
       <!-- Alignment padding, always zero, so every 64 bit body field sits on an eight byte boundary. -->
       <type name="reserved" primitiveType="uint32"/>
     </composite>
+    <composite name="PublicContext" description="Opens every public feed message; the feed's own numbering is carried by its ranges">
+      <!-- The answered command's timestamp, carried unchanged, so the public feed is replayable. -->
+      <type name="timestamp" primitiveType="uint64"/>
+      <type name="instrumentId" primitiveType="uint32"/>
+      <type name="reserved" primitiveType="uint32"/>
+    </composite>
     <composite name="EventContext" description="Written by the matcher; opens every event">
       <!-- The event's place in this partition's event stream, gap free from 1. -->
       <type name="sequence" primitiveType="uint64"/>
@@ -295,6 +301,58 @@
     <field name="context" id="1" type="EventContext"/>
     <field name="price" id="2" type="int64"/>
     <field name="quantity" id="3" type="int64"/>
+  </sbe:message>
+
+  <sbe:message name="PublicOrderAdded" id="40" description="A displayed order entered the book; no message here can say whose">
+    <field name="context" id="1" type="PublicContext"/>
+    <field name="orderId" id="2" type="uint64"/>
+    <field name="price" id="3" type="int64"/>
+    <field name="quantity" id="4" type="int64"/>
+    <field name="side" id="5" type="Side"/>
+  </sbe:message>
+
+  <sbe:message name="PublicOrderExecuted" id="41" description="A book order traded this quantity at this price">
+    <field name="context" id="1" type="PublicContext"/>
+    <field name="orderId" id="2" type="uint64"/>
+    <field name="executionId" id="3" type="uint64"/>
+    <field name="price" id="4" type="int64"/>
+    <field name="quantity" id="5" type="int64"/>
+  </sbe:message>
+
+  <sbe:message name="PublicOrderReduced" id="42" description="A book order's displayed quantity is now this">
+    <field name="context" id="1" type="PublicContext"/>
+    <field name="orderId" id="2" type="uint64"/>
+    <field name="quantity" id="3" type="int64"/>
+  </sbe:message>
+
+  <sbe:message name="PublicOrderRemoved" id="43" description="A book order left the book">
+    <field name="context" id="1" type="PublicContext"/>
+    <field name="orderId" id="2" type="uint64"/>
+  </sbe:message>
+
+  <sbe:message name="PublicSessionState" id="44" description="The trading state now in effect">
+    <field name="context" id="1" type="PublicContext"/>
+    <field name="state" id="2" type="SessionState"/>
+  </sbe:message>
+
+  <sbe:message name="PublicAuctionIndicative" id="45" description="Uncrossing price and volume if the auction ran now">
+    <field name="context" id="1" type="PublicContext"/>
+    <field name="price" id="2" type="int64"/>
+    <field name="quantity" id="3" type="int64"/>
+  </sbe:message>
+
+  <sbe:message name="PublicTopOfBook" id="46" description="The touch, conflated: best bid and offer with their displayed depth">
+    <field name="context" id="1" type="PublicContext"/>
+    <field name="bidPrice" id="2" type="int64"/>
+    <field name="bidQuantity" id="3" type="int64"/>
+    <field name="askPrice" id="4" type="int64"/>
+    <field name="askQuantity" id="5" type="int64"/>
+  </sbe:message>
+
+  <sbe:message name="SnapshotComplete" id="47" description="The snapshot's last word: join the live feed at this sequence">
+    <field name="nextSequence" id="1" type="uint64"/>
+    <field name="instruments" id="2" type="uint32"/>
+    <field name="reserved" id="3" type="uint32"/>
   </sbe:message>
 
 </sbe:messageSchema>
