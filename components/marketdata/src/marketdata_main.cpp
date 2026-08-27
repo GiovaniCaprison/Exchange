@@ -24,13 +24,13 @@
 #include <string>
 #include <vector>
 
+#include "broadcast_ring.hpp"
 #include "builder.hpp"
 #include "clock.hpp"
 #include "exchange_protocol/MessageHeader.h"
 #include "exchange_protocol/RewindRequest.h"
 #include "glimpse.hpp"
 #include "publisher.hpp"
-#include "spsc_ring.hpp"
 
 namespace {
 
@@ -105,11 +105,12 @@ int main(const int count, char** values) {
     return 2;
   }
 
-  common::SpscRing in = [&] {
+  // The event stream is a broadcast ring: this publisher holds one seat among the feed's readers.
+  common::BroadcastReader in = [&] {
     for (int attempt = 0; attempt < 300; attempt++) {
       if (std::filesystem::exists(inPath)) {
         try {
-          return common::SpscRing::attach(inPath);
+          return common::BroadcastReader::attach(inPath);
         } catch (const std::exception&) {
         }
       }

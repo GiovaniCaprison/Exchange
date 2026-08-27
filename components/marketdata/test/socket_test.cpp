@@ -15,10 +15,10 @@
 #include <string>
 #include <vector>
 
+#include "broadcast_ring.hpp"
 #include "exchange_protocol/SnapshotComplete.h"
 #include "feedtest.hpp"
 #include "ranges.hpp"
-#include "spsc_ring.hpp"
 
 using namespace exchange::marketdata;
 using namespace exchange::marketdata::test;
@@ -47,7 +47,7 @@ TEST_CASE("the process serves packets on its feeds and snapshots to late joiners
   aAddress.sin_port = htons(udpA);
   REQUIRE(::bind(listenerA, reinterpret_cast<const sockaddr*>(&aAddress), sizeof aAddress) == 0);
 
-  common::SpscRing events = common::SpscRing::create(ring.string(), 1 << 20);
+  common::BroadcastRing events = common::BroadcastRing::create(ring.string(), 1 << 20);
 
   const std::string binary = MARKETDATA_BINARY;
   REQUIRE(std::system((binary + " --in " + ring.string() + " --a 127.0.0.1:" +

@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "broadcast_ring.hpp"
 #include "client.hpp"
 #include "exchange_protocol/LoginAccepted.h"
 #include "exchange_protocol/SessionEnded.h"
@@ -81,7 +82,7 @@ TEST_CASE("a client speaks to the process over TCP and the venue hears the truth
 
   // The test is the venue: it creates the rings the sequencer and matcher would.
   common::SpscRing ackRing = common::SpscRing::create(acks.string(), 1 << 16);
-  common::SpscRing eventRing = common::SpscRing::create(events.string(), 1 << 16);
+  common::BroadcastRing eventRing = common::BroadcastRing::create(events.string(), 1 << 16);
 
   const std::string binary = GATEWAY_BINARY;
   REQUIRE(std::system((binary + " --listen " + std::to_string(port) + " --submissions " +

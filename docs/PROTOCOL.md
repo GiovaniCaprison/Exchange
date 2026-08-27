@@ -326,6 +326,16 @@ command's events with one release of its position, so a consumer sees a command'
 nothing; a full ring is back pressure and the producer waits, because a dropped event is a stream
 that cannot rebuild a book.
 
+The matcher's event stream is the exception, because it fans out: the gateway, the market data
+publisher and the operations scheduler all read it, and the matcher must never wait on its
+slowest listener. That carrier is a single-producer broadcast ring with the same record shape and
+no back pressure, following Aeron's broadcast buffer (Real Logic, open source messaging). The
+producer advances a claim marker before touching any byte and publishes its head after; a reader
+keeps its own position, copies a record out, and validates the copy against the claim marker, so
+a record is delivered whole or not at all. A reader that falls a whole buffer behind is lapped:
+it counts the lap, rejoins at the head, and recovers what it missed from the journal, never from
+guesswork.
+
 ## The journal
 
 The sequencer's journal is the append-only record of the sequenced command stream, and a matcher

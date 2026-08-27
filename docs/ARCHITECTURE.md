@@ -56,8 +56,11 @@ contract is in [PROTOCOL.md](PROTOCOL.md).
 
 On one box, transport is shared-memory single-producer single-consumer rings with space claimed in
 place, so a producer encodes directly into the bytes its consumer will read and no message is ever
-copied between processes on the hot path. Off box, the reference is Aeron (Real Logic, open source
-messaging), which carries the same sequenced-stream shape between machines.
+copied between processes on the hot path. The matcher's event stream alone is a broadcast ring,
+one producer and any number of independent readers with no back pressure, because the gateway,
+the market data publisher and the operations scheduler all consume it and none of them may stall
+the matcher. Off box, the reference is Aeron (Real Logic, open source messaging), which carries
+the same sequenced-stream shape between machines.
 
 ## Time
 
