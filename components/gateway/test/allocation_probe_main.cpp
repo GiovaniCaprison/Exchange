@@ -97,8 +97,12 @@ int main(const int count, char** values) {
 
   DiscardingRing submissions;
   exchange::sequencer::ScriptedClock clock;
-  gate::Gateway<DiscardingRing, exchange::sequencer::ScriptedClock> gateway(submissions, clock, 1,
-                                                                            {{7, 42}});
+  exchange::risk::Limits generous;
+  generous.burst = 1'000'000;
+  exchange::risk::Risk<exchange::sequencer::ScriptedClock> risk(clock, {{7, generous}});
+  gate::Gateway<DiscardingRing, exchange::sequencer::ScriptedClock,
+                exchange::risk::Risk<exchange::sequencer::ScriptedClock>>
+      gateway(submissions, clock, risk, 1, {{7, 42}});
   const int slot = gateway.opened();
   std::vector<char> login = test::loginBytes(7, 42, 0);
   gateway.received(slot, login.data(), login.size());

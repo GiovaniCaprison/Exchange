@@ -118,9 +118,23 @@ int main(const int count, char** values) {
   common::SpscRing acks = attachPatiently(acksPath);
   common::SpscRing events = attachPatiently(eventsPath);
   exchange::sequencer::WallClock clock;
-  gate::Gateway<common::SpscRing, exchange::sequencer::WallClock> gateway(
-      submissions, clock, gatewayId.empty() ? 0 : static_cast<std::uint32_t>(std::stoul(gatewayId)),
-      credentialsOf(participants));
+  // One limits shape for every participant until the operations phase brings real config; the
+  // defaults are permissive and the flag overrides them venue wide.
+  exchange::risk::Limits limits;
+  const std::string configured = argument(count, values, "--credit");
+  if (!configured.empty()) {
+    limits.credit = std::stoll(configured);
+  }
+  std::vector<std::pair<std::uint32_t, exchange::risk::Limits>> riskTable;
+  for (const gate::Credential& credential : credentialsOf(participants)) {
+    riskTable.emplace_back(credential.participantId, limits);
+  }
+  exchange::risk::Risk<exchange::sequencer::WallClock> risk(clock, riskTable);
+  gate::Gateway<common::SpscRing, exchange::sequencer::WallClock,
+                exchange::risk::Risk<exchange::sequencer::WallClock>>
+      gateway(submissions, clock, risk,
+              gatewayId.empty() ? 0 : static_cast<std::uint32_t>(std::stoul(gatewayId)),
+              credentialsOf(participants));
 
   const int listener = ::socket(AF_INET, SOCK_STREAM, 0);
   const int reuse = 1;

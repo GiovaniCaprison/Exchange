@@ -1,15 +1,14 @@
-// The measurement harness for the machine between the wire and the ring: one logged-in session,
-// prebuilt order frames in, submissions out, timed per message from bytes handed to the session
-// to the record published, warm-up excluded, raw series and manifest written (P-14). The socket
-// itself is deliberately outside this clock; the wire's own hop is the box's number to take,
-// measured by the two-hop driver against the live process (docs/PRACTICE.md, the campaign).
+// The measurement the component page promises: the cost per admitted order, timed across the
+// whole gate, throttle to credit, with the reconciling events fed between measurements so the
+// ledger stays honest without riding the clock. Raw series and manifest as everywhere (P-14).
 //
-//   gateway-benchmark --results DIR [--commands N] [--warmup N] [--core N] [--label L]
+//   risk-benchmark --results DIR [--commands N] [--warmup N] [--core N] [--label L]
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -20,35 +19,17 @@
 #endif
 #include <sys/utsname.h>
 
-#include "client.hpp"
 #include "clock.hpp"
-#include "gateway.hpp"
+#include "exchange_protocol/NewOrder.h"
+#include "exchange_protocol/OrderAccepted.h"
+#include "exchange_protocol/OrderRemoved.h"
+#include "risk.hpp"
 
 #ifndef EXCHANGE_BUILD_FLAGS
 #define EXCHANGE_BUILD_FLAGS "unrecorded"
 #endif
 
 namespace {
-
-class DiscardingRing {
- public:
-  std::size_t claim(const std::size_t length) {
-    const std::size_t aligned = (length + 7) & ~std::size_t{7};
-    if (cursor_ + aligned > sizeof space_) {
-      cursor_ = 0;
-    }
-    const std::size_t at = cursor_;
-    cursor_ += aligned;
-    return at;
-  }
-  char* buffer() { return space_; }
-  void commit() {}
-  void publish() {}
-
- private:
-  char space_[1 << 16] = {};
-  std::size_t cursor_ = 0;
-};
 
 std::string argument(const int count, char** values, const std::string& name,
                      const std::string& fallback) {
@@ -94,64 +75,72 @@ std::uint64_t quantile(const std::vector<std::uint64_t>& sorted, const double q)
 }  // namespace
 
 int main(const int count, char** values) {
-  namespace gate = exchange::gateway;
-  namespace test = exchange::gateway::test;
   namespace sbe = exchange::protocol;
+  using exchange::risk::Intent;
+  using exchange::risk::Limits;
+  using exchange::risk::Risk;
 
   const std::string resultsPath = argument(count, values, "--results", "");
-  const std::string label = argument(count, values, "--label", "gateway");
-  const std::uint64_t commands = std::stoull(argument(count, values, "--commands", "200000"));
+  const std::string label = argument(count, values, "--label", "risk");
+  const std::uint64_t commands = std::stoull(argument(count, values, "--commands", "500000"));
   const std::uint64_t warmup = std::stoull(argument(count, values, "--warmup", "10000"));
   const long core = std::stol(argument(count, values, "--core", "-1"));
   if (resultsPath.empty() || commands <= warmup) {
     std::fprintf(stderr,
-                 "usage: gateway-benchmark --results DIR [--commands N] [--warmup N] [--core N]"
+                 "usage: risk-benchmark --results DIR [--commands N] [--warmup N] [--core N]"
                  " [--label L]\n");
     return 2;
   }
 
   const std::string isolation = pinned(core);
-  exchange::matcher::test::CommandWriter writer;
-  std::vector<std::vector<char>> orders;
-  orders.reserve(commands);
-  for (std::uint64_t at = 0; at < commands; at++) {
-    orders.push_back(test::commandBytes(
-        writer.newOrder(1, 900 + at, 7, sbe::Side::BUY, sbe::Pricing::LIMIT,
-                        sbe::TimeInForce::GOOD_TILL_CANCEL, false, 1000, 1, 0, 0, 0, 0)));
-  }
-  char ack[64] = {};
-  {
-    sbe::CommandSequenced sequenced;
-    sequenced.wrapAndApplyHeader(ack, 0, sizeof ack);
-    sequenced.gatewaySequence(0).sequence(0).timestamp(0);
-  }
-
-  DiscardingRing submissions;
-  exchange::sequencer::ScriptedClock clock;
-  exchange::risk::Limits generous;
+  exchange::sequencer::VirtualClock clock;
+  Limits generous;
   generous.burst = 1'000'000;
-  exchange::risk::Risk<exchange::sequencer::ScriptedClock> risk(clock, {{7, generous}});
-  gate::Gateway<DiscardingRing, exchange::sequencer::ScriptedClock,
-                exchange::risk::Risk<exchange::sequencer::ScriptedClock>>
-      gateway(submissions, clock, risk, 1, {{7, 42}});
-  const int slot = gateway.opened();
-  std::vector<char> login = test::loginBytes(7, 42, 0);
-  gateway.received(slot, login.data(), login.size());
-  const auto drainAll = [&] {
-    const auto [bytes, length] = gateway.outbound(slot);
-    gateway.drained(slot, length);
-  };
-  drainAll();
+  generous.collarWidth = 1'000'000;
+  Risk<exchange::sequencer::VirtualClock> risk(clock, {{7, generous}});
+
+  char accepted[128] = {};
+  char removed[128] = {};
+  {
+    sbe::OrderAccepted event;
+    event.wrapAndApplyHeader(accepted, 0, sizeof accepted);
+    event.context().sequence(1).inputSequence(1).timestamp(1).instrumentId(1).reserved(0);
+    event.participantId(7);
+    sbe::OrderRemoved gone;
+    gone.wrapAndApplyHeader(removed, 0, sizeof removed);
+    gone.context().sequence(2).inputSequence(2).timestamp(2).instrumentId(1).reserved(0);
+    gone.quantity(1).reason(sbe::RemoveReason::CANCELLED);
+  }
+  const std::size_t acceptedSize =
+      sbe::MessageHeader::encodedLength() + sbe::OrderAccepted::sbeBlockLength();
+  const std::size_t removedSize =
+      sbe::MessageHeader::encodedLength() + sbe::OrderRemoved::sbeBlockLength();
 
   std::vector<std::uint64_t> timings(commands, 0);
   for (std::uint64_t at = 0; at < commands; at++) {
+    clock.advance(1'000'000);
+    Intent order{sbe::NewOrder::sbeTemplateId(),
+                 900 + at,
+                 1,
+                 1000 + static_cast<std::int64_t>(at % 7),
+                 5,
+                 true,
+                 false};
     const std::uint64_t before = now();
-    gateway.received(slot, orders[at].data(), orders[at].size());
+    const bool admitted = risk.admit(7, order).admitted;
     timings[at] = now() - before;
-    const std::uint64_t gatewaySequence = at + 1;
-    std::memcpy(ack + sbe::MessageHeader::encodedLength(), &gatewaySequence,
-                sizeof gatewaySequence);
-    gateway.onAck(ack, sizeof ack);
+    if (!admitted) {
+      std::fprintf(stderr, "the gate refused the benchmark's own flow\n");
+      return 1;
+    }
+    const std::uint64_t orderId = at + 1;
+    std::uint64_t clientOrderId = 900 + at;
+    std::memcpy(accepted + sbe::MessageHeader::encodedLength() + 32, &orderId, sizeof orderId);
+    std::memcpy(accepted + sbe::MessageHeader::encodedLength() + 40, &clientOrderId,
+                sizeof clientOrderId);
+    risk.onEvent(accepted, acceptedSize);
+    std::memcpy(removed + sbe::MessageHeader::encodedLength() + 32, &orderId, sizeof orderId);
+    risk.onEvent(removed, removedSize);
   }
 
   std::vector<std::uint64_t> measured(timings.begin() + static_cast<long>(warmup), timings.end());
@@ -171,7 +160,7 @@ int main(const int count, char** values) {
     std::ofstream manifest(directory / (label + "-manifest.json"));
     manifest << "{\n"
              << "  \"label\": \"" << label << "\",\n"
-             << "  \"path\": \"session bytes in to submission published, socket excluded\",\n"
+             << "  \"path\": \"one admission through every check, events off the clock\",\n"
              << "  \"commands\": " << commands << ",\n"
              << "  \"warmup\": " << warmup << ",\n"
              << "  \"isolation\": \"" << isolation << "\",\n"
@@ -194,7 +183,7 @@ int main(const int count, char** values) {
              << "}\n";
   }
   std::printf(
-      "%s: %zu commands, p50 %llu ns, p99 %llu ns, p99.9 %llu ns, max %llu ns (%s)\n",
+      "%s: %zu admissions, p50 %llu ns, p99 %llu ns, p99.9 %llu ns, max %llu ns (%s)\n",
       label.c_str(), measured.size(), static_cast<unsigned long long>(quantile(sorted, 0.50)),
       static_cast<unsigned long long>(quantile(sorted, 0.99)),
       static_cast<unsigned long long>(quantile(sorted, 0.999)),

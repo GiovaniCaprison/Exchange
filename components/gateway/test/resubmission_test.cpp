@@ -40,7 +40,9 @@ TEST_CASE("after a failover the gateway resubmits and exactly-once holds end to 
 
   CapturingLink submissions;
   VirtualClock clock;
-  Gateway<CapturingLink, VirtualClock> gateway(submissions, clock, 0, {{7, 42}});
+  exchange::risk::Risk<VirtualClock> risk(clock, {{7, {}}});
+  Gateway<CapturingLink, VirtualClock, exchange::risk::Risk<VirtualClock>> gateway(
+      submissions, clock, risk, 0, {{7, 42}});
   const int slot = gateway.opened();
   std::vector<char> login = loginBytes(7, 42, 0);
   gateway.received(slot, login.data(), login.size());

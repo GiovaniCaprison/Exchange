@@ -49,6 +49,13 @@ served to late joiners in queue priority order so a replay rebuilds the book's f
 conflated top of book beside the depth. Its design and its proofs live in
 `components/marketdata/`.
 
+Risk is the gate in the gateway's path: rate throttle, order size, notional, duplicate, price
+collar and credit, cheapest first, refused with a typed reason on the session, and what the gate
+refuses never takes a place in the global order (SEC Rule 15c3-5 is the modelled driver). Credit
+is a ledger accounted from the admission side and reconciled by the venue's own events, held to
+the engine's actual holdings by invariants and to conservation, draining to zero when everything
+closes. Its design and its proofs live in `components/risk/`.
+
 ## Build
 
 Requires CMake and a C++23 compiler.

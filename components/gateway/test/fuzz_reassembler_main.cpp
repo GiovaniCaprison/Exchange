@@ -45,8 +45,10 @@ class DiscardingRing {
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_t size) {
   DiscardingRing submissions;
   exchange::sequencer::VirtualClock clock;
-  exchange::gateway::Gateway<DiscardingRing, exchange::sequencer::VirtualClock> gateway(
-      submissions, clock, 1, {{7, 42}});
+  exchange::risk::Risk<exchange::sequencer::VirtualClock> risk(clock, {{7, {}}});
+  exchange::gateway::Gateway<DiscardingRing, exchange::sequencer::VirtualClock,
+                             exchange::risk::Risk<exchange::sequencer::VirtualClock>>
+      gateway(submissions, clock, risk, 1, {{7, 42}});
   const int slot = gateway.opened();
   // The first byte shreds the rest, so the fuzzer explores reassembly boundaries too.
   const std::size_t shred = size == 0 ? 1 : 1 + data[0] % 64;

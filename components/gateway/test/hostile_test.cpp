@@ -35,7 +35,9 @@ std::uint64_t next(std::uint64_t& state) {
 TEST_CASE("seeded garbage in random shreds never breaks the machine or reaches the venue") {
   CapturingLink submissions;
   VirtualClock clock;
-  Gateway<CapturingLink, VirtualClock> gateway(submissions, clock, 1, {{7, 42}});
+  exchange::risk::Risk<VirtualClock> risk(clock, {{7, {}}});
+  Gateway<CapturingLink, VirtualClock, exchange::risk::Risk<VirtualClock>> gateway(
+      submissions, clock, risk, 1, {{7, 42}});
   std::uint64_t state = 20260827;
 
   for (int round = 0; round < 200; round++) {
@@ -62,7 +64,9 @@ TEST_CASE("seeded garbage in random shreds never breaks the machine or reaches t
 TEST_CASE("lengths that lie are poison in both directions") {
   CapturingLink submissions;
   VirtualClock clock;
-  Gateway<CapturingLink, VirtualClock> gateway(submissions, clock, 1, {{7, 42}});
+  exchange::risk::Risk<VirtualClock> risk(clock, {{7, {}}});
+  Gateway<CapturingLink, VirtualClock, exchange::risk::Risk<VirtualClock>> gateway(
+      submissions, clock, risk, 1, {{7, 42}});
 
   // Shorter than any message header.
   const int tiny = gateway.opened();
@@ -83,7 +87,9 @@ TEST_CASE("lengths that lie are poison in both directions") {
 TEST_CASE("a truncated frame waits forever and the clock ends it, never the parser") {
   CapturingLink submissions;
   VirtualClock clock;
-  Gateway<CapturingLink, VirtualClock> gateway(submissions, clock, 1, {{7, 42}});
+  exchange::risk::Risk<VirtualClock> risk(clock, {{7, {}}});
+  Gateway<CapturingLink, VirtualClock, exchange::risk::Risk<VirtualClock>> gateway(
+      submissions, clock, risk, 1, {{7, 42}});
   const int slot = gateway.opened();
   std::vector<char> login = loginBytes(7, 42, 0);
   gateway.received(slot, login.data(), login.size() - 5);
@@ -97,7 +103,9 @@ TEST_CASE("a truncated frame waits forever and the clock ends it, never the pars
 TEST_CASE("a valid frame wrapping a forged command still cannot cross identity") {
   CapturingLink submissions;
   VirtualClock clock;
-  Gateway<CapturingLink, VirtualClock> gateway(submissions, clock, 1, {{7, 42}, {8, 43}});
+  exchange::risk::Risk<VirtualClock> risk(clock, {{7, {}}, {8, {}}});
+  Gateway<CapturingLink, VirtualClock, exchange::risk::Risk<VirtualClock>> gateway(
+      submissions, clock, risk, 1, {{7, 42}, {8, 43}});
   const int slot = gateway.opened();
   std::vector<char> login = loginBytes(7, 42, 0);
   gateway.received(slot, login.data(), login.size());

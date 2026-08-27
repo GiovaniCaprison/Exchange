@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "exchange_protocol/CancelOrder.h"
+#include "exchange_protocol/CommandRefused.h"
 #include "exchange_protocol/CommandSequenced.h"
 #include "exchange_protocol/GatewaySubmission.h"
 #include "exchange_protocol/LoginAccepted.h"
@@ -43,6 +44,7 @@
 #include "exchange_protocol/ReplaceOrder.h"
 #include "exchange_protocol/SessionEnded.h"
 #include "exchange_protocol/SessionHeartbeat.h"
+#include "risk.hpp"
 #include "sequencer.hpp"
 #include "wire.hpp"
 
@@ -55,19 +57,20 @@ struct Credential {
   std::uint64_t secret = 0;
 };
 
-template <typename SubmitRing, typename Clock>
+template <typename SubmitRing, typename Clock, typename RiskGate>
 class Gateway {
  public:
   static constexpr std::size_t CONNECTIONS = 64;
   static constexpr std::uint64_t PENDING = 1 << 14;
   static constexpr std::size_t ORDERS = 1 << 17;
 
-  Gateway(SubmitRing& submissions, Clock& clock, const std::uint32_t gatewayId,
+  Gateway(SubmitRing& submissions, Clock& clock, RiskGate& risk, const std::uint32_t gatewayId,
           std::vector<Credential> credentials,
           const std::uint64_t heartbeatNanos = 1'000'000'000ULL,
           const std::uint64_t resubmitAfterNanos = 500'000'000ULL)
       : submissions_(submissions),
         clock_(clock),
+        risk_(risk),
         gatewayId_(gatewayId),
         credentials_(std::move(credentials)),
         heartbeat_(heartbeatNanos),
@@ -209,6 +212,8 @@ class Gateway {
   }
 
   void onEvent(char* message, const std::size_t length) {
+    // The gate reconciles its ledger from the same stream the sessions hear (P-1).
+    risk_.onEvent(message, length);
     sbe::MessageHeader wrap;
     wrap.wrap(message, 0, 0, length);
     switch (wrap.templateId()) {
@@ -270,6 +275,7 @@ class Gateway {
   std::uint64_t poisoned() const { return poisoned_; }
   std::uint64_t timeouts() const { return timeouts_; }
   std::uint64_t rejections() const { return rejections_; }
+  std::uint64_t gateRefusals() const { return gateRefusals_; }
   std::uint64_t unroutable() const { return unroutable_; }
 
  private:
@@ -330,18 +336,70 @@ class Gateway {
       return;
     }
     switch (wrap.templateId()) {
-      case sbe::NewOrder::sbeTemplateId():
-        submit(connection, message, length, newOrderParticipantAt_);
+      case sbe::NewOrder::sbeTemplateId(): {
+        sbe::NewOrder command;
+        command.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
+                              length);
+        risk::Intent intent{wrap.templateId(),
+                            command.clientOrderId(),
+                            command.context().instrumentId(),
+                            command.price(),
+                            command.quantity(),
+                            command.side() == sbe::Side::BUY,
+                            command.pricing() == sbe::Pricing::MARKET};
+        if (gated(connection, intent)) {
+          submit(connection, message, length, newOrderParticipantAt_);
+        }
         break;
-      case sbe::CancelOrder::sbeTemplateId():
-        submit(connection, message, length, cancelParticipantAt_);
+      }
+      case sbe::CancelOrder::sbeTemplateId(): {
+        sbe::CancelOrder command;
+        command.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
+                              length);
+        risk::Intent intent{wrap.templateId(),
+                            command.clientOrderId(),
+                            command.context().instrumentId(),
+                            0,
+                            0,
+                            false,
+                            false};
+        if (gated(connection, intent)) {
+          submit(connection, message, length, cancelParticipantAt_);
+        }
         break;
-      case sbe::ReplaceOrder::sbeTemplateId():
-        submit(connection, message, length, replaceParticipantAt_);
+      }
+      case sbe::ReplaceOrder::sbeTemplateId(): {
+        sbe::ReplaceOrder command;
+        command.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
+                              length);
+        risk::Intent intent{wrap.templateId(),
+                            command.clientOrderId(),
+                            command.context().instrumentId(),
+                            command.price(),
+                            command.quantity(),
+                            false,
+                            false};
+        if (gated(connection, intent)) {
+          submit(connection, message, length, replaceParticipantAt_);
+        }
         break;
-      case sbe::MassCancel::sbeTemplateId():
-        submit(connection, message, length, massCancelParticipantAt_);
+      }
+      case sbe::MassCancel::sbeTemplateId(): {
+        sbe::MassCancel command;
+        command.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
+                              length);
+        risk::Intent intent{wrap.templateId(),
+                            command.clientOrderId(),
+                            command.context().instrumentId(),
+                            0,
+                            0,
+                            false,
+                            false};
+        if (gated(connection, intent)) {
+          submit(connection, message, length, massCancelParticipantAt_);
+        }
         break;
+      }
       case sbe::SessionHeartbeat::sbeTemplateId():
         break;
       case sbe::LogoutRequest::sbeTemplateId():
@@ -428,6 +486,22 @@ class Gateway {
     }
     connection.state = State::ENDED;
     unbind(connection);
+  }
+
+  // The risk gate's answer, and the typed refusal when it says no; what it refuses never
+  // reaches the venue (docs/PROTOCOL.md, the gate's risk checks).
+  bool gated(Connection& connection, const risk::Intent& intent) {
+    const risk::Verdict verdict = risk_.admit(connection.participant, intent);
+    if (verdict.admitted) {
+      return true;
+    }
+    char answer[64];
+    sbe::CommandRefused refused;
+    refused.wrapAndApplyHeader(answer, 0, sizeof answer);
+    refused.clientOrderId(intent.clientOrderId).reason(verdict.reason);
+    enqueue(connection, answer, encodedSize<sbe::CommandRefused>());
+    gateRefusals_++;
+    return false;
   }
 
   void unbind(Connection& connection) {
@@ -547,6 +621,7 @@ class Gateway {
 
   SubmitRing& submissions_;
   Clock& clock_;
+  RiskGate& risk_;
   std::uint32_t gatewayId_;
   std::vector<Credential> credentials_;
   std::uint64_t heartbeat_;
@@ -571,12 +646,13 @@ class Gateway {
   std::uint64_t rejections_ = 0;
   std::uint64_t timeouts_ = 0;
   std::uint64_t unroutable_ = 0;
+  std::uint64_t gateRefusals_ = 0;
 };
 
 // The participantId field offsets, one specialisation per command the vocabulary permits.
-template <typename SubmitRing, typename Clock>
+template <typename SubmitRing, typename Clock, typename RiskGate>
 template <typename Command>
-std::size_t Gateway<SubmitRing, Clock>::participantOffsetOf() {
+std::size_t Gateway<SubmitRing, Clock, RiskGate>::participantOffsetOf() {
   char probe[128] = {};
   Command command;
   command.wrapAndApplyHeader(probe, 0, sizeof probe);
