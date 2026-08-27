@@ -7,7 +7,7 @@
 // not ask for.
 //
 //   gateway --listen PORT --submissions RING --acks RING --events RING
-//           --participants ID:SECRET[,ID:SECRET...] [--gateway-id N] [--once]
+//           --participants ID:SECRET[,ID:SECRET...] [--gateway-id N] [--once] [--spin]
 //
 // The gateway creates its submission ring and attaches the acknowledgment and event rings, which
 // the sequencer and matcher create, retrying until they exist so the processes can start in any
@@ -121,6 +121,11 @@ int main(const int count, char** values) {
   const std::string participants = argument(count, values, "--participants");
   const std::string gatewayId = argument(count, values, "--gateway-id");
   const bool once = flagged(count, values, "--once");
+  // The rings cannot wake a socket wait: an acceptance sitting in shared memory would age for
+  // the whole timeout while the loop sleeps. Real order gateways busy poll; --spin is that, and
+  // the campaign pins the core it burns. The default keeps a laptop's fans honest.
+  const bool spin = flagged(count, values, "--spin");
+  const int patience = spin ? 0 : 10;
   if (listen.empty() || submissionsPath.empty() || acksPath.empty() || eventsPath.empty() ||
       participants.empty()) {
     std::fprintf(stderr,
@@ -239,7 +244,7 @@ int main(const int count, char** values) {
   ::epoll_ctl(waiter, EPOLL_CTL_ADD, listener, &interest);
   while (stopped == 0) {
     epoll_event woke[SLOTS + 1];
-    const int ready = ::epoll_wait(waiter, woke, SLOTS + 1, 10);
+    const int ready = ::epoll_wait(waiter, woke, SLOTS + 1, patience);
     for (int at = 0; at < ready; at++) {
       if (woke[at].data.fd == listener) {
         const int slot = acceptOne();
@@ -279,7 +284,7 @@ int main(const int count, char** values) {
         entries++;
       }
     }
-    ::poll(polled, entries, 10);
+    ::poll(polled, entries, patience);
     if ((polled[0].revents & POLLIN) != 0) {
       acceptOne();
     }

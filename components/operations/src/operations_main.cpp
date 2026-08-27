@@ -4,8 +4,8 @@
 // SIGTERM lets the calendar's close stand as the last word.
 //
 //   operations --submissions RING --acks RING --events RING --instruments 1,2
-//              [--calendar OFFSET:STATE,...] [--band-bps N] [--halt-ms N] [--auction-ms N]
-//              [--gateway-id N]
+//              [--define ID:TICK:LOT:MIN:MAX:BAND:OPEN,...] [--calendar OFFSET:STATE,...]
+//              [--band-bps N] [--halt-ms N] [--auction-ms N] [--gateway-id N]
 //
 // Calendar offsets are nanoseconds from process start; states are PRE_OPEN, OPENING_AUCTION,
 // CONTINUOUS, CLOSING_AUCTION, HALTED and CLOSED. Real venues run calendars from reference data
@@ -160,6 +160,26 @@ int main(const int count, char** values) {
 
   ops::Scheduler<common::SpscRing, exchange::sequencer::WallClock> scheduler(submissions, wall,
                                                                              config);
+  // Reference data first: an instrument's definition precedes every other command for it.
+  const std::string defines = argument(count, values, "--define");
+  if (!defines.empty()) {
+    for (const std::string& entry : split(defines, ',')) {
+      const std::vector<std::string> parts = split(entry, ':');
+      if (parts.size() != 7) {
+        std::fprintf(stderr, "--define wants ID:TICK:LOT:MIN:MAX:BAND:OPEN\n");
+        return 2;
+      }
+      ops::Scheduler<common::SpscRing, exchange::sequencer::WallClock>::Definition definition;
+      definition.instrumentId = static_cast<std::uint32_t>(std::stoul(parts[0]));
+      definition.tickSize = std::stoll(parts[1]);
+      definition.lotSize = std::stoll(parts[2]);
+      definition.minPrice = std::stoll(parts[3]);
+      definition.maxPrice = std::stoll(parts[4]);
+      definition.bandWidth = std::stoll(parts[5]);
+      definition.openingReference = std::stoll(parts[6]);
+      scheduler.define(definition);
+    }
+  }
   std::signal(SIGINT, onSignal);
   std::signal(SIGTERM, onSignal);
   std::signal(SIGUSR1, onHalt);

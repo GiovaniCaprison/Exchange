@@ -138,6 +138,19 @@ same matrix, `-DEXCHANGE_PGO=generate` then `-DEXCHANGE_PGO=use`; post-link layo
 command per measured binary, `BOLT_MODE=perf scripts/bolt.sh BINARY -- WORKLOAD-ARGS`, whose
 whole cycle ci proves in instrumentation mode on every merge.
 
+The wire-to-wire arm is the venue measured as a venue: client order entry in to acceptance heard
+back, over real TCP and UDP, under flow that reacts to the book because the bots do. One command
+runs it, `SPIN=1 DURATION=60 NOISE=3 MULTICAST=239.7.7.7 scripts/day.sh results/campaign/day`,
+with the gateway pinned by prefixing its line in the script with `taskset -c 16` on the box.
+`SPIN=1` matters: the rings cannot wake a socket wait, so an unspun gateway ages every acceptance
+by its poll timeout, and the difference between the spun and unspun day is itself a measurement
+worth keeping. The maker's manifest lands beside the journals; for a dense series give a noise
+seat `--results`, because replaces keep their ids and measure nothing while every taker order is
+a new acceptance. Decomposition runs from the outside in: the bot's wire-to-wire number, minus
+the driver's two-hop ring-to-ring number, is the price of the socket edges; the two-hop number
+minus the per-component machine costs is the price of the carriers, and every term has its own
+harness in the matrix above.
+
 The campaign feeds back into the repository: baselines become budgets, budgets become gates,
 and the codegen ritual's blessed-escape list hardens into a check, so the next change that
 spends what the campaign banked fails a build instead of a retrospective.

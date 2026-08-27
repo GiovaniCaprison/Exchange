@@ -79,3 +79,39 @@ TEST_CASE("silence from the sequencer means resubmission, never loss") {
   REQUIRE(out.ranges.size() == 2);
   CHECK(out.ranges[0] == out.ranges[1]);
 }
+
+TEST_CASE("reference data rides the same acknowledged carrier") {
+  VirtualClock wall;
+  CapturingLink out;
+  Config config;
+  config.instruments = {1};
+  Scheduler<CapturingLink, VirtualClock> scheduler(out, wall, config);
+
+  Scheduler<CapturingLink, VirtualClock>::Definition definition;
+  definition.instrumentId = 1;
+  definition.tickSize = 5;
+  definition.lotSize = 1;
+  definition.minPrice = 5;
+  definition.maxPrice = 1'000'000;
+  definition.bandWidth = 100'000'000;
+  definition.openingReference = 100'000;
+  scheduler.define(definition);
+
+  REQUIRE(out.ranges.size() == 1);
+  char* command = out.ranges[0].data() + exchange::sequencer::SUBMISSION_BYTES;
+  sbe::MessageHeader wrap;
+  wrap.wrap(command, 0, 0, out.ranges[0].size());
+  REQUIRE(wrap.templateId() == sbe::InstrumentDefinition::sbeTemplateId());
+  sbe::InstrumentDefinition decoded;
+  decoded.wrapForDecode(command, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
+                        out.ranges[0].size());
+  CHECK(decoded.context().instrumentId() == 1);
+  CHECK(decoded.tickSize() == 5);
+  CHECK(decoded.openingReference() == 100'000);
+
+  // Unacknowledged reference data resubmits as identical bytes, like everything the carrier owes.
+  wall.advance(600'000'000);
+  scheduler.onTick();
+  REQUIRE(out.ranges.size() == 2);
+  CHECK(out.ranges[1] == out.ranges[0]);
+}
