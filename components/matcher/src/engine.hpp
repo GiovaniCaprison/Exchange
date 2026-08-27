@@ -234,6 +234,33 @@ class Engine {
     if (callPhase(state_)) {
       reportIndicative();
     }
+    if (state_ == CLOSED) {
+      expireDayOrders();
+    }
+  }
+
+  // The close is the end of the session a DAY order lives in: everything resting or waiting
+  // under DAY leaves with its own reason, in arrival order so a replay expires the same book the
+  // same way, and GOOD_TILL_CANCEL stands for tomorrow through the snapshot.
+  void expireDayOrders() {
+    gathered_.clear();
+    book_.all(gathered_);
+    triggers_.all(gathered_);
+    sortByArrival(gathered_);
+    for (const std::int32_t slot : gathered_) {
+      if (slab_.cold(slot).timeInForce != DAY) {
+        continue;
+      }
+      const std::uint64_t id = slab_.hot(slot).id;
+      if (slab_.cold(slot).triggerPrice != 0) {
+        triggers_.remove(slot);
+        feed_.removed(id, slab_.hot(slot).remaining, sbe::RemoveReason::EXPIRED);
+      } else {
+        book_.remove(slab_.cold(slot).side, slot);
+        feed_.removed(id, slab_.hot(slot).displayed, sbe::RemoveReason::EXPIRED);
+      }
+      slab_.release(slot);
+    }
   }
 
   // Views for the tests, allocating freely because tests own their time -------------------------

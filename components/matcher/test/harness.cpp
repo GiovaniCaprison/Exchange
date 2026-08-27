@@ -55,6 +55,8 @@ const char* removeName(const std::int32_t reason) {
       return "IOC_REMAINDER";
     case sbe::RemoveReason::SELF_MATCH_PREVENTED:
       return "SELF_MATCH_PREVENTED";
+    case sbe::RemoveReason::EXPIRED:
+      return "EXPIRED";
     default:
       return "UNKNOWN_REASON";
   }

@@ -111,6 +111,8 @@
       <validValue name="MASS_CANCELLED">2</validValue>
       <validValue name="IMMEDIATE_OR_CANCEL_REMAINDER">3</validValue>
       <validValue name="SELF_MATCH_PREVENTED">4</validValue>
+      <!-- A DAY order at the close: the session it lived in is over. -->
+      <validValue name="EXPIRED">5</validValue>
     </enum>
   </types>
 
