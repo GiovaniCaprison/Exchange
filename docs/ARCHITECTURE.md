@@ -97,4 +97,6 @@ Input arrives sequenced, gap free, well framed and stamped. Those are preconditi
 the sequencer and the transport, and no process re-checks them on the hot path. Business
 validation is a different matter and belongs to whoever owns the rule: the matcher validates an
 order against its instrument once at its own boundary, refuses with a machine readable reason, and
-trusts everything below that boundary.
+trusts everything below that boundary. The gateway's risk gate stands before the sequencer and
+owns the client-facing rules, so what it refuses never takes a place in the order and a
+cancellation is never blocked; the market access rule it models is SEC Rule 15c3-5.

@@ -9,6 +9,7 @@
 
 #include "exchange_protocol/AuctionIndicative.h"
 #include "exchange_protocol/CancelOrder.h"
+#include "exchange_protocol/CommandRefused.h"
 #include "exchange_protocol/CommandSequenced.h"
 #include "exchange_protocol/GatewaySubmission.h"
 #include "exchange_protocol/InstrumentDefinition.h"
@@ -105,6 +106,13 @@ TEST_CASE("the public feed round trips and can say nothing private") {
 
 TEST_CASE("the session plane round trips") {
   std::vector<char> space(256);
+  {
+    auto out = encoded<CommandRefused>(space);
+    out.clientOrderId(901).reason(RiskRefusal::PRICE_COLLAR);
+    auto in = decoded<CommandRefused>(space);
+    CHECK(in.clientOrderId() == 901);
+    CHECK(in.reason() == RiskRefusal::PRICE_COLLAR);
+  }
   {
     auto out = encoded<LoginRequest>(space);
     out.expectedSequence(41).credential(0xC0FFEE).participantId(7).reserved(0);

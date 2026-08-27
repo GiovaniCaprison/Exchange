@@ -202,6 +202,29 @@ unacknowledged under its original numbering, which the leadership section makes 
 Heartbeats pulse both ways on an idle interval, and silence past it is a dead peer. LogoutRequest
 asks for a clean end; SessionEnded is the gateway's last word on a session either way.
 
+## The gate's risk checks
+
+Before a command is forwarded to the sequencer it passes the gateway's risk gate, so what the
+gate refuses never takes a place in the global order; the modelled driver is the market access
+rule (SEC Rule 15c3-5, 2010). The checks run cheapest first and the refusal reports the first
+failing check's reason as CommandRefused on the session: the message rate throttle, a token
+bucket per session; maximum order quantity; maximum notional, price times quantity; a duplicate
+check, refusing a clientOrderId that is still alive; the price collar, a configured width around
+the instrument's last execution as the gate has seen it on the event stream, unchecked until a
+first execution exists; and credit. Cancellations and mass cancellations pass every check but
+the throttle, because a venue never blocks the message that reduces risk. The venue's own
+validation and its precedence stand unchanged behind the gate.
+
+Credit is a ledger accounted from the admission side, because the event stream shows displayed
+quantity and a hidden remainder is exposure all the same: an admitted order reserves its full
+notional at its admitted price, a replace re-prices the reservation, executions drain it at the
+admitted price as the venue's events arrive, and a rejection or removal releases what remains.
+The gate admits while the sum of its ledger and the magnitude of the participant's executed
+position stays within the configured credit. Between admission and the venue's answer the ledger
+is deliberately ahead of the truth, which is the safe side of eventual consistency; the events
+reconcile it, and when every order has closed the ledger drains to zero, which the invariants
+hold as conservation.
+
 ## The submission plane
 
 A gateway submits commands to the sequencer as a framed GatewaySubmission message, gatewaySequence
