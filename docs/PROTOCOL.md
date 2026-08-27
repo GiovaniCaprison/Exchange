@@ -175,6 +175,33 @@ on tick, inside the static band, inside the dynamic band, then trigger price che
 checks that read the book: post-only crossing, FILL_OR_KILL fillability, minQuantity fillability.
 A refusal reports the first failing check's reason and changes nothing.
 
+## The session
+
+A client meets the venue over a session whose shape follows SoupBinTCP and whose messages are
+this schema's, the same move iLink 3 made (both public specifications). The carrier is a byte
+stream; each message travels as a u16 length prefix and one framed message, the framing ranges
+use for their contents. A connection opens with LoginRequest naming the participant, a
+credential, and the session sequence the client expects next, zero on a first connection. The
+gateway answers LoginAccepted and replays the session's sequenced stream from that point, or
+LoginRejected with the reason and closes the connection; asking past the stream's end is
+SEQUENCE_AHEAD, because a replay cannot invent what never happened.
+
+Downstream, the session is a sequenced stream in SoupBinTCP's sense: every message the gateway
+sends after acceptance, heartbeats aside, occupies the next session sequence implicitly, nothing
+carries the number on the wire, and both sides count. The stream's content is the venue's own
+event vocabulary filtered to what the session's participant owns, which is what an execution
+report is here, so a reconnecting client resumes byte exactly by logging in with the sequence it
+reached, the client-side mirror of the venue's rewind. Upstream, the client speaks the command
+vocabulary itself, with the context's sequence and timestamp zeroed and participantId zeroed;
+the gateway writes the session's participantId in place before forwarding, so identity is the
+session's fact and a client cannot speak as anyone else. Client messages are unsequenced in the
+session sense: their delivery contract is the path behind the gateway, retry plus deduplication,
+rather than session replay, and after a sequencer failover the gateway resubmits everything
+unacknowledged under its original numbering, which the leadership section makes harmless.
+
+Heartbeats pulse both ways on an idle interval, and silence past it is a dead peer. LogoutRequest
+asks for a clean end; SessionEnded is the gateway's last word on a session either way.
+
 ## The submission plane
 
 A gateway submits commands to the sequencer as a framed GatewaySubmission message, gatewaySequence

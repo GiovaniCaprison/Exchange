@@ -49,6 +49,12 @@
     <set name="OrderFlags" encodingType="uint8">
       <choice name="postOnly">0</choice>
     </set>
+    <enum name="LoginRefusal" encodingType="uint8">
+      <validValue name="BAD_CREDENTIAL">0</validValue>
+      <validValue name="UNKNOWN_PARTICIPANT">1</validValue>
+      <validValue name="ALREADY_LOGGED_IN">2</validValue>
+      <validValue name="SEQUENCE_AHEAD">3</validValue>
+    </enum>
     <enum name="Allocation" encodingType="uint8">
       <validValue name="PRICE_TIME">0</validValue>
       <validValue name="PRO_RATA">1</validValue>
@@ -253,6 +259,36 @@
   <sbe:message name="SessionStateChanged" id="17" description="The state now in effect">
     <field name="context" id="1" type="EventContext"/>
     <field name="state" id="2" type="SessionState"/>
+  </sbe:message>
+
+  <sbe:message name="LoginRequest" id="30" description="Opens a session: who the client is, and the session sequence it expects next">
+    <!-- One past the last sequenced message the client saw; zero on a first connection. -->
+    <field name="expectedSequence" id="1" type="uint64"/>
+    <field name="credential" id="2" type="uint64"/>
+    <field name="participantId" id="3" type="uint32"/>
+    <field name="reserved" id="4" type="uint32"/>
+  </sbe:message>
+
+  <sbe:message name="LoginAccepted" id="31" description="The session is open; replay begins at the sequence the client asked for">
+    <field name="nextSequence" id="1" type="uint64"/>
+    <field name="participantId" id="2" type="uint32"/>
+    <field name="reserved" id="3" type="uint32"/>
+  </sbe:message>
+
+  <sbe:message name="LoginRejected" id="32" description="The session did not open, and the connection will close">
+    <field name="reason" id="1" type="LoginRefusal"/>
+  </sbe:message>
+
+  <sbe:message name="SessionHeartbeat" id="33" description="Either side's pulse; silence past the interval is a dead peer">
+    <field name="reserved" id="1" type="uint64"/>
+  </sbe:message>
+
+  <sbe:message name="LogoutRequest" id="34" description="The client asks to end the session cleanly">
+    <field name="reserved" id="1" type="uint64"/>
+  </sbe:message>
+
+  <sbe:message name="SessionEnded" id="35" description="The gateway's last word on a session, clean or not">
+    <field name="reserved" id="1" type="uint64"/>
   </sbe:message>
 
   <sbe:message name="AuctionIndicative" id="18" description="Uncrossing price and volume if the auction ran now">

@@ -25,7 +25,10 @@ client's order entry message into the venue's canonical command. Session framing
 entry vocabulary follow the shape of SoupBinTCP and OUCH (Nasdaq, public specifications); carrying
 the same vocabulary over SBE follows iLink 3 (CME Group, public documentation). A gateway holds no
 venue state: it forwards commands to the sequencer and reads the sequence back like every other
-consumer, which is how it learns the fate of what it forwarded.
+consumer, which is how it learns the fate of what it forwarded. Under a sequencer failover it
+resubmits everything unacknowledged under the same per-gateway numbering, and the deduplication
+the new leader inherited makes every retry harmless, so exactly-once holds from the client's
+chair as well.
 
 Matcher partitions own the books. Each partition is one process with one thread on one pinned
 core, consuming the sequenced stream through a ring, matching, and emitting events into another
