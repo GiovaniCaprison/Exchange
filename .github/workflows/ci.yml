@@ -40,6 +40,17 @@ jobs:
       - run: cmake --build build-sanitize
       - run: ctest --test-dir build-sanitize --output-on-failure
 
+  # The gateway's parsers face the internet, so every merge fuzzes them a little: the target
+  # builds under Linux clang, which ships the libFuzzer runtime, and a bounded pass runs with the
+  # sanitizers riding along. A crash here is a real finding, not a flake.
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -B build-fuzz -DEXCHANGE_FUZZ=ON -DCMAKE_CXX_COMPILER=clang++
+      - run: cmake --build build-fuzz --target gateway-fuzz
+      - run: ./build-fuzz/components/gateway/gateway-fuzz -runs=20000 -max_len=512
+
   format:
     runs-on: ubuntu-latest
     steps:
