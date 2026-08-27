@@ -25,6 +25,7 @@ endif()
 # finding is an exit code, and the flags go on before the test framework is fetched because a
 # sanitized binary must be sanitized all the way down.
 option(EXCHANGE_SANITIZE "address and undefined behaviour sanitizers on every target" OFF)
+option(EXCHANGE_FUZZ "build the coverage-guided fuzz targets (clang only)" OFF)
 if(EXCHANGE_SANITIZE)
   add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all
                       -fno-omit-frame-pointer)
@@ -79,3 +80,4 @@ add_subdirectory(schema)
 add_subdirectory(components/common)
 add_subdirectory(components/matcher)
 add_subdirectory(components/sequencer)
+add_subdirectory(components/gateway)
