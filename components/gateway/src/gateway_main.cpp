@@ -7,7 +7,12 @@
 // not ask for.
 //
 //   gateway --listen PORT --submissions RING --acks RING --events RING
-//           --participants ID:SECRET[,ID:SECRET...] [--gateway-id N] [--once] [--spin]
+//           --participants ID:SECRET[:cod][,...] [--gateway-id N] [--once] [--spin]
+//           [--kill-file PATH]
+//
+// A credential suffixed :cod buys cancel on disconnect. SIGUSR1 is the kill switch: every
+// participant id listed in the kill file, one per line, is killed, its session ended, its books
+// swept; rewrite the file and signal again to kill more.
 //
 // The gateway creates its submission ring and attaches the acknowledgment and event rings, which
 // the sequencer and matcher create, retrying until they exist so the processes can start in any
@@ -45,8 +50,10 @@ namespace common = exchange::common;
 namespace gate = exchange::gateway;
 
 volatile std::sig_atomic_t stopped = 0;
+volatile std::sig_atomic_t killRequested = 0;
 
 void onSignal(int) { stopped = 1; }
+void onKill(int) { killRequested = 1; }
 
 std::string argument(const int count, char** values, const std::string& name) {
   for (int at = 1; at + 1 < count; at++) {
@@ -74,8 +81,14 @@ std::vector<gate::Credential> credentialsOf(const std::string& list) {
     const std::string entry =
         list.substr(from, comma == std::string::npos ? std::string::npos : comma - from);
     const std::size_t colon = entry.find(':');
-    credentials.push_back({static_cast<std::uint32_t>(std::stoul(entry.substr(0, colon))),
-                           std::stoull(entry.substr(colon + 1))});
+    const std::size_t second = entry.find(':', colon + 1);
+    gate::Credential credential;
+    credential.participantId = static_cast<std::uint32_t>(std::stoul(entry.substr(0, colon)));
+    credential.secret = std::stoull(entry.substr(
+        colon + 1, second == std::string::npos ? std::string::npos : second - colon - 1));
+    credential.cancelOnDisconnect =
+        second != std::string::npos && entry.substr(second + 1) == "cod";
+    credentials.push_back(credential);
     if (comma == std::string::npos) {
       break;
     }
@@ -121,6 +134,7 @@ int main(const int count, char** values) {
   const std::string participants = argument(count, values, "--participants");
   const std::string gatewayId = argument(count, values, "--gateway-id");
   const bool once = flagged(count, values, "--once");
+  const std::string killFile = argument(count, values, "--kill-file");
   // The rings cannot wake a socket wait: an acceptance sitting in shared memory would age for
   // the whole timeout while the loop sleeps. Real order gateways busy poll; --spin is that, and
   // the campaign pins the core it burns. The default keeps a laptop's fans honest.
@@ -171,6 +185,7 @@ int main(const int count, char** values) {
 
   std::signal(SIGINT, onSignal);
   std::signal(SIGTERM, onSignal);
+  std::signal(SIGUSR1, onKill);
 
   constexpr std::size_t SLOTS = 64;
   int sockets[SLOTS];
@@ -217,6 +232,25 @@ int main(const int count, char** values) {
       }
     }
   };
+  const auto answerKill = [&] {
+    if (killRequested == 0 || killFile.empty()) {
+      killRequested = 0;
+      return;
+    }
+    killRequested = 0;
+    std::FILE* file = std::fopen(killFile.c_str(), "r");
+    if (file == nullptr) {
+      return;
+    }
+    char line[64];
+    while (std::fgets(line, sizeof line, file) != nullptr) {
+      const unsigned long participant = std::strtoul(line, nullptr, 10);
+      if (participant != 0) {
+        gateway.kill(static_cast<std::uint32_t>(participant));
+      }
+    }
+    std::fclose(file);
+  };
   const auto sweep = [&] {
     for (std::size_t slot = 0; slot < SLOTS; slot++) {
       if (sockets[slot] >= 0 && gateway.wantsClose(static_cast<int>(slot))) {
@@ -228,6 +262,7 @@ int main(const int count, char** values) {
         }
       }
     }
+    answerKill();
     acks.poll([&](char* message, const std::size_t length) { gateway.onAck(message, length); });
     events.poll([&](char* message, const std::size_t length) { gateway.onEvent(message, length); });
     gateway.onTick();

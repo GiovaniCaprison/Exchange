@@ -25,6 +25,11 @@ target_include_directories(gateway-resubmission PRIVATE ${SEQUENCER_TEST_DIR})
 target_link_libraries(gateway-resubmission
   PRIVATE exchange-gateway matcher-test-harness Catch2::Catch2WithMain)
 
+add_executable(gateway-guardian test/guardian_test.cpp)
+target_include_directories(gateway-guardian PRIVATE ${SEQUENCER_TEST_DIR})
+target_link_libraries(gateway-guardian
+  PRIVATE exchange-gateway exchange-matcher matcher-test-harness Catch2::Catch2WithMain)
+
 add_executable(gateway-hostile test/hostile_test.cpp)
 target_include_directories(gateway-hostile PRIVATE ${SEQUENCER_TEST_DIR})
 target_link_libraries(gateway-hostile
@@ -67,6 +72,7 @@ endif()
 catch_discover_tests(gateway-session)
 catch_discover_tests(gateway-routing)
 catch_discover_tests(gateway-resubmission)
+catch_discover_tests(gateway-guardian)
 catch_discover_tests(gateway-hostile)
 catch_discover_tests(gateway-socket)
 catch_discover_tests(gateway-allocation)

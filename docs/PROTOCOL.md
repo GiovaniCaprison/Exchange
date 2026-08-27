@@ -58,7 +58,7 @@ again is what keeps replay byte exact (P-2, P-3).
 | NewOrder | clientOrderId u64, price i64, quantity i64, minQuantity i64, displayQuantity i64, triggerPrice i64, smpId u64, participantId u32, side Side, pricing Pricing, timeInForce TimeInForce, flags OrderFlags | the four qualifiers are absent when zero |
 | CancelOrder | clientOrderId u64, participantId u32 | names the order by the id its owner gave it |
 | ReplaceOrder | clientOrderId u64, quantity i64, price i64, participantId u32 | carries full intent rather than a delta |
-| MassCancel | clientOrderId u64, participantId u32 | removes everything the participant has resting or waiting |
+| MassCancel | clientOrderId u64, participantId u32 | removes everything the participant has resting or waiting; instrument zero in its context sweeps every book |
 | SessionControl | state SessionState | the trading state moves on this command and on nothing else |
 
 Commands name orders by the pair (participantId, clientOrderId), unique per participant for the
@@ -202,6 +202,16 @@ unacknowledged under its original numbering, which the leadership section makes 
 
 Heartbeats pulse both ways on an idle interval, and silence past it is a dead peer. LogoutRequest
 asks for a clean end; SessionEnded is the gateway's last word on a session either way.
+
+Two session-level risk controls guard the door. Cancel on disconnect, granted per credential, is
+the service real venues sell under exactly this name: any unclean session death, a dropped
+transport, a heartbeat death, a poisoned stream, makes the gateway submit one venue-wide
+MassCancel under the participant's identity, through the same acknowledged carrier as
+everything, so the sweep is sequenced, journaled and replayable like any command; an asked-for
+logout leaves the books standing. The kill switch is the operator's hand SEC Rule 15c3-5
+demands: a killed participant's session ends, its logins answer KILLED, and its books are swept
+once, whatever its disconnect setting; reviving it reopens the door and nothing more. Neither
+sweep consults the risk gate, because unwinding risk is never refused.
 
 ## The gate's risk checks
 

@@ -55,6 +55,10 @@ namespace sbe = ::exchange::protocol;
 struct Credential {
   std::uint32_t participantId = 0;
   std::uint64_t secret = 0;
+  // Real venues sell this per session: an unclean death sweeps the participant's books.
+  bool cancelOnDisconnect = false;
+  // The kill switch's mark: logins refused, and the books already swept.
+  bool killed = false;
 };
 
 template <typename SubmitRing, typename Clock, typename RiskGate>
@@ -88,7 +92,7 @@ class Gateway {
     pending_.resize(PENDING);
     pendingArena_.resize(std::size_t{1} << 22);
     orderKeys_.assign(ORDERS, 0);
-    orderOwners_.assign(ORDERS, 0);
+    orderOwners_.resize(ORDERS);
     lastAck_ = clock_.now();
     newOrderParticipantAt_ = participantOffsetOf<sbe::NewOrder>();
     cancelParticipantAt_ = participantOffsetOf<sbe::CancelOrder>();
@@ -104,6 +108,7 @@ class Gateway {
         Connection& connection = connections_[slot];
         connection.state = State::AWAITING_LOGIN;
         connection.participant = NOBODY;
+        connection.cleanExit = false;
         connection.reassembler.reset();
         connection.out.clear();
         connection.drained = 0;
@@ -244,13 +249,60 @@ class Gateway {
         if (resting != NOBODY && resting != aggressor) {
           deliver(resting, message, length);
         }
+        // A rested order that filled whole is done; the delivery came first.
+        const long at = find(event.restingOrderId());
+        if (at >= 0) {
+          Owned& order = orderOwners_[static_cast<std::size_t>(at)];
+          order.remaining -= event.quantity();
+          if (order.rested && order.remaining <= 0) {
+            eraseOrder(static_cast<std::size_t>(at));
+          }
+        }
         break;
       }
-      case sbe::OrderRested::sbeTemplateId():
-      case sbe::OrderReduced::sbeTemplateId():
-      case sbe::OrderRemoved::sbeTemplateId():
+      case sbe::OrderRested::sbeTemplateId(): {
+        sbe::OrderRested event;
+        event.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
+                            length);
+        const long at = find(event.orderId());
+        if (at >= 0) {
+          deliver(orderOwners_[static_cast<std::size_t>(at)].participant, message, length);
+          orderOwners_[static_cast<std::size_t>(at)].rested = true;
+          orderOwners_[static_cast<std::size_t>(at)].remaining = event.quantity();
+        } else {
+          unroutable_++;
+        }
+        break;
+      }
+      case sbe::OrderReduced::sbeTemplateId(): {
+        sbe::OrderReduced event;
+        event.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
+                            length);
+        const long at = find(event.orderId());
+        if (at >= 0) {
+          deliver(orderOwners_[static_cast<std::size_t>(at)].participant, message, length);
+          orderOwners_[static_cast<std::size_t>(at)].remaining = event.quantity();
+        } else {
+          unroutable_++;
+        }
+        break;
+      }
+      case sbe::OrderRemoved::sbeTemplateId(): {
+        sbe::OrderRemoved event;
+        event.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
+                            length);
+        const long at = find(event.orderId());
+        if (at >= 0) {
+          deliver(orderOwners_[static_cast<std::size_t>(at)].participant, message, length);
+          if (event.reason() != sbe::RemoveReason::REPLACED) {
+            eraseOrder(static_cast<std::size_t>(at));
+          }
+        } else {
+          unroutable_++;
+        }
+        break;
+      }
       case sbe::OrderTriggered::sbeTemplateId(): {
-        // These four open with (context, orderId), so the owner is one map read away.
         std::uint64_t orderId = 0;
         std::memcpy(
             &orderId,
@@ -269,6 +321,35 @@ class Gateway {
     }
   }
 
+  // The kill switch (SEC Rule 15c3-5's demand): the participant's session ends, its logins are
+  // refused, and its books are swept venue wide, exactly once, whatever its disconnect setting.
+  void kill(const std::uint32_t participant) {
+    for (Credential& credential : credentials_) {
+      if (credential.participantId != participant || credential.killed) {
+        continue;
+      }
+      credential.killed = true;
+      for (Connection& connection : connections_) {
+        if (connection.participant == participant &&
+            (connection.state == State::ESTABLISHED || connection.state == State::AWAITING_LOGIN)) {
+          connection.cleanExit = true;
+          end(connection, true);
+        }
+      }
+      sweepBooks(participant);
+      kills_++;
+    }
+  }
+
+  // The operator's other hand: a revived participant may log in again; its books stay swept.
+  void revive(const std::uint32_t participant) {
+    for (Credential& credential : credentials_) {
+      if (credential.participantId == participant) {
+        credential.killed = false;
+      }
+    }
+  }
+
   std::uint64_t submitted() const { return nextGatewaySequence_ - 1; }
   std::uint64_t acked() const { return ackedUpTo_; }
   std::uint64_t resubmitted() const { return resubmitted_; }
@@ -277,6 +358,8 @@ class Gateway {
   std::uint64_t rejections() const { return rejections_; }
   std::uint64_t gateRefusals() const { return gateRefusals_; }
   std::uint64_t unroutable() const { return unroutable_; }
+  std::uint64_t swept() const { return swept_; }
+  std::uint64_t kills() const { return kills_; }
 
  private:
   enum class State : std::uint8_t { FREE, AWAITING_LOGIN, ESTABLISHED, ENDED };
@@ -290,6 +373,7 @@ class Gateway {
   struct Connection {
     State state = State::FREE;
     std::uint32_t participant = NOBODY;
+    bool cleanExit = false;
     Reassembler reassembler;
     std::vector<char> out;
     std::size_t drained = 0;
@@ -348,7 +432,7 @@ class Gateway {
                             command.side() == sbe::Side::BUY,
                             command.pricing() == sbe::Pricing::MARKET};
         if (gated(connection, intent)) {
-          submit(connection, message, length, newOrderParticipantAt_);
+          submit(connection.participant, message, length, newOrderParticipantAt_);
         }
         break;
       }
@@ -364,7 +448,7 @@ class Gateway {
                             false,
                             false};
         if (gated(connection, intent)) {
-          submit(connection, message, length, cancelParticipantAt_);
+          submit(connection.participant, message, length, cancelParticipantAt_);
         }
         break;
       }
@@ -380,7 +464,7 @@ class Gateway {
                             false,
                             false};
         if (gated(connection, intent)) {
-          submit(connection, message, length, replaceParticipantAt_);
+          submit(connection.participant, message, length, replaceParticipantAt_);
         }
         break;
       }
@@ -396,13 +480,15 @@ class Gateway {
                             false,
                             false};
         if (gated(connection, intent)) {
-          submit(connection, message, length, massCancelParticipantAt_);
+          submit(connection.participant, message, length, massCancelParticipantAt_);
         }
         break;
       }
       case sbe::SessionHeartbeat::sbeTemplateId():
         break;
       case sbe::LogoutRequest::sbeTemplateId():
+        // The one orderly exit: an asked-for logout leaves the participant's books standing.
+        connection.cleanExit = true;
         end(connection, true);
         break;
       default:
@@ -438,6 +524,10 @@ class Gateway {
     }
     if (found->secret != request.credential()) {
       reject(connection, sbe::LoginRefusal::BAD_CREDENTIAL);
+      return;
+    }
+    if (found->killed) {
+      reject(connection, sbe::LoginRefusal::KILLED);
       return;
     }
     Stream& stream = streams_[streamAt];
@@ -512,8 +602,36 @@ class Gateway {
           stream.boundTo = -1;
         }
       }
+      // Cancel on disconnect: every session death funnels through here, and an unclean one, a
+      // dropped transport, a heartbeat death, a poisoned stream, sweeps the participant's books
+      // venue wide, which is the service real venues sell under exactly this name.
+      if (!connection.cleanExit && codOf(connection.participant)) {
+        sweepBooks(connection.participant);
+      }
       connection.participant = NOBODY;
     }
+  }
+
+  bool codOf(const std::uint32_t participant) const {
+    for (const Credential& credential : credentials_) {
+      if (credential.participantId == participant) {
+        return credential.cancelOnDisconnect;
+      }
+    }
+    return false;
+  }
+
+  // The gateway's own hand: one venue-wide MassCancel under the participant's identity, through
+  // the same acknowledged carrier as everything, bypassing the gate because unwinding risk is
+  // never refused.
+  void sweepBooks(const std::uint32_t participant) {
+    char command[128] = {};
+    sbe::MassCancel cancel;
+    cancel.wrapAndApplyHeader(command, 0, sizeof command);
+    cancel.context().sequence(0).timestamp(0).instrumentId(0).reserved(0);
+    cancel.clientOrderId(0).participantId(participant);
+    submit(participant, command, encodedSize<sbe::MassCancel>(), massCancelParticipantAt_);
+    swept_++;
   }
 
   // Where each command keeps its participantId, taken from the codecs so a schema change moves
@@ -521,11 +639,10 @@ class Gateway {
   template <typename Command>
   static std::size_t participantOffsetOf();
 
-  void submit(Connection& connection, char* command, const std::size_t length,
+  void submit(const std::uint32_t participant, char* command, const std::size_t length,
               const std::size_t participantOffset) {
     // Identity is the session's fact: whatever the client wrote here is overwritten.
-    std::memcpy(command + participantOffset, &connection.participant,
-                sizeof connection.participant);
+    std::memcpy(command + participantOffset, &participant, sizeof participant);
     const std::uint64_t gatewaySequence = nextGatewaySequence_++;
     if (gatewaySequence - ackedUpTo_ > PENDING) {
       throw std::runtime_error("the gateway's pending window overflowed; the venue is gone");
@@ -549,28 +666,84 @@ class Gateway {
     arenaIn_ += record;
   }
 
+  // Ownership hygiene: entries leave when their orders die, and an aggressor that filled whole,
+  // which no removal ever names, ages out by orderId distance on a periodic sweep. A table whose
+  // entries never leave saturates however big it is, and a saturated open table probes forever;
+  // this used to be a hard stop at three quarters full, which was honest but was still a venue
+  // that dies on its busiest day.
+  struct Owned {
+    std::uint64_t orderId = 0;
+    std::uint32_t participant = 0;
+    std::int64_t remaining = 0;
+    bool rested = false;
+  };
+
+  static constexpr std::uint64_t AGE_HORIZON = 1 << 16;
+  static constexpr std::size_t SWEEP_EVERY = 4096;
+
   void remember(const std::uint64_t orderId, const std::uint32_t participant) {
-    if (++orderCount_ > (ORDERS * 3) / 4) {
-      throw std::runtime_error("the gateway's order table overflowed; size it for the session");
-    }
     std::size_t slot = orderId & (ORDERS - 1);
-    while (orderKeys_[slot] != 0) {
+    while (orderKeys_[slot] != 0 && orderKeys_[slot] != orderId) {
       slot = (slot + 1) & (ORDERS - 1);
     }
     orderKeys_[slot] = orderId;
-    orderOwners_[slot] = participant;
+    orderOwners_[slot] = {orderId, participant, 0, false};
+    if (orderId > newestOrderId_) {
+      newestOrderId_ = orderId;
+    }
+    if (++orderCount_ % SWEEP_EVERY == 0) {
+      sweepTable();
+    }
   }
 
-  std::uint32_t ownerOf(const std::uint64_t orderId) {
+  long find(const std::uint64_t orderId) {
     std::size_t slot = orderId & (ORDERS - 1);
     while (orderKeys_[slot] != 0) {
       if (orderKeys_[slot] == orderId) {
-        return orderOwners_[slot];
+        return static_cast<long>(slot);
       }
       slot = (slot + 1) & (ORDERS - 1);
     }
-    unroutable_++;
-    return NOBODY;
+    return -1;
+  }
+
+  std::uint32_t ownerOf(const std::uint64_t orderId) {
+    const long at = find(orderId);
+    if (at < 0) {
+      unroutable_++;
+      return NOBODY;
+    }
+    return orderOwners_[static_cast<std::size_t>(at)].participant;
+  }
+
+  void eraseOrder(std::size_t at) {
+    orderKeys_[at] = 0;
+    std::size_t hole = at;
+    std::size_t probe = (at + 1) & (ORDERS - 1);
+    while (orderKeys_[probe] != 0) {
+      const std::size_t wants = orderKeys_[probe] & (ORDERS - 1);
+      const bool movable = ((probe - wants) & (ORDERS - 1)) >= ((probe - hole) & (ORDERS - 1));
+      if (movable) {
+        orderKeys_[hole] = orderKeys_[probe];
+        orderOwners_[hole] = orderOwners_[probe];
+        orderKeys_[probe] = 0;
+        hole = probe;
+      }
+      probe = (probe + 1) & (ORDERS - 1);
+    }
+  }
+
+  void sweepTable() {
+    if (newestOrderId_ <= AGE_HORIZON) {
+      return;
+    }
+    const std::uint64_t oldest = newestOrderId_ - AGE_HORIZON;
+    for (std::size_t at = 0; at < ORDERS; at++) {
+      if (orderKeys_[at] != 0 && !orderOwners_[at].rested && orderOwners_[at].orderId < oldest) {
+        eraseOrder(at);
+        at--;
+      }
+    }
   }
 
   void deliver(const std::uint32_t participant, const char* message, const std::size_t length) {
@@ -635,8 +808,9 @@ class Gateway {
   std::uint64_t ackedUpTo_ = 0;
   std::uint64_t lastAck_ = 0;
   std::vector<std::uint64_t> orderKeys_;
-  std::vector<std::uint32_t> orderOwners_;
+  std::vector<Owned> orderOwners_;
   std::size_t orderCount_ = 0;
+  std::uint64_t newestOrderId_ = 0;
   std::size_t newOrderParticipantAt_ = 0;
   std::size_t cancelParticipantAt_ = 0;
   std::size_t replaceParticipantAt_ = 0;
@@ -647,6 +821,8 @@ class Gateway {
   std::uint64_t timeouts_ = 0;
   std::uint64_t unroutable_ = 0;
   std::uint64_t gateRefusals_ = 0;
+  std::uint64_t swept_ = 0;
+  std::uint64_t kills_ = 0;
 };
 
 // The participantId field offsets, one specialisation per command the vocabulary permits.
