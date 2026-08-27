@@ -6,6 +6,7 @@
 //   operations --submissions RING --acks RING --events RING --instruments 1,2
 //              [--define ID:TICK:LOT:MIN:MAX:BAND:OPEN,...] [--calendar OFFSET:STATE,...]
 //              [--band-bps N] [--halt-ms N] [--auction-ms N] [--gateway-id N]
+//              [--breaker-instrument N] [--breaker-halt-ms N]
 //
 // Calendar offsets are nanoseconds from process start; states are PRE_OPEN, OPENING_AUCTION,
 // CONTINUOUS, CLOSING_AUCTION, HALTED and CLOSED. Real venues run calendars from reference data
@@ -155,6 +156,14 @@ int main(const int count, char** values) {
   const std::string gatewayId = argument(count, values, "--gateway-id");
   if (!gatewayId.empty()) {
     config.gatewayId = static_cast<std::uint32_t>(std::stoul(gatewayId));
+  }
+  const std::string breaker = argument(count, values, "--breaker-instrument");
+  if (!breaker.empty()) {
+    config.breakerInstrument = static_cast<std::uint32_t>(std::stoul(breaker));
+  }
+  const std::string breakerHalt = argument(count, values, "--breaker-halt-ms");
+  if (!breakerHalt.empty()) {
+    config.breakerHaltNanos = std::stoull(breakerHalt) * 1'000'000ULL;
   }
   const std::vector<std::uint32_t> everyone = config.instruments;
 

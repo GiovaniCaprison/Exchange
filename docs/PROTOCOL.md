@@ -303,8 +303,13 @@ through the closing auction to the close, and it owns halts: an instrument whose
 outside a configured band around the trailing mean of its own executions is halted, and a halted
 instrument reopens through an auction, because a halted book needs a fair price to restart from.
 The shape follows the Limit Up-Limit Down plan (public); the band, its trailing window, the
-pause and the reopening call are configuration. A replayed day reproduces every transition and
-every halt at the same sequences, because the commands are in the journal like everything else.
+pause and the reopening call are configuration. Above the single-instrument bands sits the
+market-wide circuit breaker in NYSE Rule 7.12's shape: declines in a configured reference
+instrument from the session's first print trip three levels, the first two pausing every
+instrument once per session each, the third closing the day, and the calendar outranks all of
+it, because tomorrow is a calendar event. A replayed day reproduces every transition, every halt
+and every break at the same sequences, because the commands are in the journal like everything
+else.
 
 ## The oversight plane
 

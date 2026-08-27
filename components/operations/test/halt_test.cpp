@@ -140,3 +140,115 @@ TEST_CASE("the operator's hand and the calendar's rank") {
   scheduler.onTick();
   CHECK(out.ranges.size() == 2);
 }
+
+TEST_CASE("the market-wide breaker pauses everything, once per level, and level three closes") {
+  VirtualClock wall;
+  CapturingLink out;
+  Config config;
+  config.instruments = {1, 2, 3};
+  config.bandBasisPoints = 100'000;  // The single-instrument band stays out of this story.
+  config.haltNanos = 1'000;
+  config.auctionNanos = 500;
+  config.breakerInstrument = 1;
+  config.breakerHaltNanos = 2'000;
+  Scheduler<CapturingLink, VirtualClock> scheduler(out, wall, config);
+  const auto confirmAll = [&](const sbe::SessionState::Value state) {
+    for (std::uint32_t instrument = 1; instrument <= 3; instrument++) {
+      std::vector<char> event = stateAt(instrument, state);
+      scheduler.onEvent(event.data(), event.size());
+    }
+  };
+  confirmAll(sbe::SessionState::CONTINUOUS);
+
+  // The session's first print anchors the day at 100000.
+  std::vector<char> anchor = printAt(1, 10, 100'000);
+  scheduler.onEvent(anchor.data(), anchor.size());
+  CHECK(scheduler.breaks() == 0);
+
+  // Six point nine percent down changes nothing; seven point one trips level one, everywhere.
+  std::vector<char> shallow = printAt(1, 20, 93'100);
+  scheduler.onEvent(shallow.data(), shallow.size());
+  CHECK(scheduler.breaks() == 0);
+  std::vector<char> levelOne = printAt(1, 30, 92'900);
+  const std::size_t before = out.ranges.size();
+  scheduler.onEvent(levelOne.data(), levelOne.size());
+  CHECK(scheduler.breaks() == 1);
+  CHECK(scheduler.breakerLevel() == 1);
+  REQUIRE(out.ranges.size() == before + 3);
+  for (std::size_t at = before; at < out.ranges.size(); at++) {
+    CHECK(stateOfRecord(out.ranges[at]) == sbe::SessionState::HALTED);
+  }
+
+  // The same depth again is quiet: level one fires once per session.
+  confirmAll(sbe::SessionState::HALTED);
+  wall.advance(2'100);
+  scheduler.onTick();
+  confirmAll(sbe::SessionState::OPENING_AUCTION);
+  wall.advance(600);
+  scheduler.onTick();
+  confirmAll(sbe::SessionState::CONTINUOUS);
+  std::vector<char> again = printAt(1, 40, 92'800);
+  scheduler.onEvent(again.data(), again.size());
+  CHECK(scheduler.breaks() == 1);
+
+  // Thirteen percent trips level two; twenty closes the day for every instrument.
+  std::vector<char> levelTwo = printAt(1, 50, 86'900);
+  scheduler.onEvent(levelTwo.data(), levelTwo.size());
+  CHECK(scheduler.breaks() == 2);
+  CHECK(scheduler.breakerLevel() == 2);
+  confirmAll(sbe::SessionState::HALTED);
+  wall.advance(2'100);
+  scheduler.onTick();
+  confirmAll(sbe::SessionState::OPENING_AUCTION);
+  wall.advance(600);
+  scheduler.onTick();
+  confirmAll(sbe::SessionState::CONTINUOUS);
+  const std::size_t beforeClose = out.ranges.size();
+  std::vector<char> levelThree = printAt(1, 60, 79'900);
+  scheduler.onEvent(levelThree.data(), levelThree.size());
+  CHECK(scheduler.breaks() == 3);
+  CHECK(scheduler.breakerLevel() == 3);
+  REQUIRE(out.ranges.size() == beforeClose + 3);
+  for (std::size_t at = beforeClose; at < out.ranges.size(); at++) {
+    CHECK(stateOfRecord(out.ranges[at]) == sbe::SessionState::CLOSED);
+  }
+
+  // Declines in any other instrument never speak for the market.
+  std::vector<char> elsewhere = printAt(2, 70, 1);
+  scheduler.onEvent(elsewhere.data(), elsewhere.size());
+  CHECK(scheduler.breaks() == 3);
+}
+
+TEST_CASE("a new session resets the breaker's anchor and its once-per-level memory") {
+  VirtualClock wall;
+  CapturingLink out;
+  Config config;
+  config.instruments = {1};
+  config.bandBasisPoints = 100'000;
+  config.breakerInstrument = 1;
+  config.breakerHaltNanos = 1'000;
+  const std::uint64_t start = wall.now();
+  config.calendar = {{start + 100, sbe::SessionState::PRE_OPEN},
+                     {start + 200, sbe::SessionState::CONTINUOUS}};
+  Scheduler<CapturingLink, VirtualClock> scheduler(out, wall, config);
+
+  std::vector<char> trading = stateAt(1, sbe::SessionState::CONTINUOUS);
+  scheduler.onEvent(trading.data(), trading.size());
+  std::vector<char> anchor = printAt(1, 10, 100'000);
+  scheduler.onEvent(anchor.data(), anchor.size());
+  std::vector<char> trip = printAt(1, 20, 92'000);
+  scheduler.onEvent(trip.data(), trip.size());
+  CHECK(scheduler.breakerLevel() == 1);
+
+  // The calendar opens a fresh session: the anchor and the memory belong to yesterday.
+  wall.advance(250);
+  scheduler.onTick();
+  scheduler.onEvent(trading.data(), trading.size());
+  std::vector<char> reAnchor = printAt(1, 30, 92'000);
+  scheduler.onEvent(reAnchor.data(), reAnchor.size());
+  CHECK(scheduler.breakerLevel() == 0);
+  std::vector<char> reTrip = printAt(1, 40, 85'000);
+  scheduler.onEvent(reTrip.data(), reTrip.size());
+  CHECK(scheduler.breakerLevel() == 1);
+  CHECK(scheduler.breaks() == 2);
+}
