@@ -22,6 +22,10 @@ jobs:
       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure
+      # The codegen gate: the ritual's escape and instruction ceilings, enforced, so the next
+      # change that puts string machinery back in a hot function fails here instead of in a
+      # retrospective. The ceilings are generous until the campaign tightens them into budgets.
+      - run: python3 scripts/codegen.py --build build --gate scripts/codegen-blessed.txt
       # The linter at the pinned LLVM version, reading .clang-tidy and the compile database the
       # configure step wrote, so the runner, a laptop and an editor's clangd agree on every
       # finding. Sources only: headers are checked through their includers via HeaderFilterRegex.

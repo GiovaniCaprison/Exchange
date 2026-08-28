@@ -14,10 +14,14 @@ the host's own OS with the box's -march and reads the same instruction stream th
 without needing a Linux sysroot.
 
   scripts/codegen.py [--build build] [--out build/codegen] [--symbol REGEX]
-                     [--march icelake-server] [--compiler clang++]
+                     [--march icelake-server] [--compiler clang++] [--gate FILE]
 
-The full assembly and one file per extracted function land in --out. Exit code 0 always: the
-ritual informs, and what a gate may assert is decided by the campaign once normal has a number.
+The full assembly and one file per extracted function land in --out. Without --gate the exit
+code is 0 always: the ritual informs. With --gate it enforces: the file lists, per watched
+function, a ceiling on instructions and on escapes, blessed generously today because instruction
+counts drift across compilers, and tightened by the campaign once the box gives normal a number.
+A breach fails the build, so the next change that puts string machinery back in a hot function
+answers for it in the diff that did it.
 """
 
 import argparse
@@ -130,7 +134,18 @@ def main():
                         help="regex choosing the functions read")
     parser.add_argument("--march", default="cascadelake", help="the box's architecture")
     parser.add_argument("--compiler", default="clang++")
+    parser.add_argument("--gate", default=None,
+                        help="blessed ceilings file; breaches fail the run")
     arguments = parser.parse_args()
+
+    ceilings = {}
+    if arguments.gate:
+        for line in pathlib.Path(arguments.gate).read_text().splitlines():
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            needle, top, leaks = line.split()
+            ceilings[needle] = (int(top), int(leaks))
 
     root = pathlib.Path(__file__).resolve().parent.parent
     build = root / arguments.build
@@ -173,6 +188,7 @@ def main():
     # line because a refusal that throws is initialisation-grade code, and the reading is about
     # the hot part.
     cold = [(name, body) for name, body in matched if ".cold" in names[name]]
+    breaches = []
     for at, (name, body) in enumerate(x for x in matched if ".cold" not in names[x[0]]):
         short = re.sub(r"\W+", "-", names[name])[:72].strip("-")
         extract = out / f"{at:02d}-{short}.s"
@@ -198,9 +214,20 @@ def main():
                 print(f"    {count:3d}  {target}")
         else:
             print("  never leaves the function: no calls, no tail calls")
+        for needle, (top, leaks) in ceilings.items():
+            if needle in names[name]:
+                if len(listed) > top:
+                    breaches.append(
+                        f"{names[name]}: {len(listed)} instructions over the blessed {top}")
+                if len(left) > leaks:
+                    breaches.append(f"{names[name]}: {len(left)} escapes over the blessed {leaks}")
     if cold:
         total = sum(len(instructions(body)) for _, body in cold)
         print(f"{len(cold)} outlined cold continuations, {total} instructions, the throw paths")
+    if breaches:
+        for breach in breaches:
+            print(f"GATE: {breach}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

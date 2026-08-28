@@ -173,9 +173,12 @@ to the same run against the on-box one, is the measured price of the wire.
 The witness still leases over rings, so automated failover remains an on-box arrangement; the
 witness's own UDP carrier is the named next step on the horizon page.
 
-The campaign feeds back into the repository: baselines become budgets, budgets become gates,
-and the codegen ritual's blessed-escape list hardens into a check, so the next change that
-spends what the campaign banked fails a build instead of a retrospective.
+The campaign feeds back into the repository: baselines become budgets and budgets become gates.
+The codegen ritual is already one: `scripts/codegen.py --gate scripts/codegen-blessed.txt` runs
+on every merge, holding each watched hot function to a blessed ceiling of instructions and
+escapes, generous today because instruction counts drift across compilers, and tightened by the
+campaign once the box gives normal a number. Raising a ceiling is a deliberate act that belongs
+in the diff that needed it, with the ritual's report beside it.
 
 ## What may gate
 
