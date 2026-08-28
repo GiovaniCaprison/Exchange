@@ -36,7 +36,11 @@ ring. A single writer keeps a book in one core's cache and needs no locks, no fe
 path and no retry loops, which makes one thread the fast option as well as the simple one (Fowler
 2011, The LMAX Architecture; Thompson, Farley, Barker, Gee, Stewart 2011, Disruptor technical
 paper, LMAX). Symbols are partitioned across matchers, so concurrency exists between books and
-never within one, and a partition serves every instrument routed to it from the one thread.
+never within one, and a partition serves every instrument routed to it from the one thread. A
+sharded deployment runs one matcher per instrument set on the same sequenced stream, each
+filtering to what it serves, journaling only that, and minting ids under its shard's namespace,
+so downstream consumers merge the event streams without a thought; a mass cancel naming
+instrument zero sweeps every shard, because it addresses every book wherever it lives.
 
 Downstream consumers derive everything else from the sequenced stream and the event streams: the
 public market data feed, built as its own process in TotalView-ITCH's shape with A and B packet

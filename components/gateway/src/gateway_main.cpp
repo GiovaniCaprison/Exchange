@@ -150,7 +150,20 @@ int main(const int count, char** values) {
 
   common::SpscRing submissions = common::SpscRing::create(submissionsPath, 1 << 22);
   common::SpscRing acks = attachPatiently(acksPath);
-  common::BroadcastReader events = joinPatiently(eventsPath);
+  // One seat per shard: the event stream may arrive as several broadcast rings.
+  std::vector<common::BroadcastReader> events;
+  {
+    std::size_t at = 0;
+    while (at < eventsPath.size()) {
+      const std::size_t comma = eventsPath.find(',', at);
+      events.push_back(joinPatiently(
+          eventsPath.substr(at, comma == std::string::npos ? std::string::npos : comma - at)));
+      if (comma == std::string::npos) {
+        break;
+      }
+      at = comma + 1;
+    }
+  }
   exchange::sequencer::WallClock clock;
   // One limits shape for every participant until the operations phase brings real config; the
   // defaults are permissive and the flag overrides them venue wide.
@@ -264,7 +277,10 @@ int main(const int count, char** values) {
     }
     answerKill();
     acks.poll([&](char* message, const std::size_t length) { gateway.onAck(message, length); });
-    events.poll([&](char* message, const std::size_t length) { gateway.onEvent(message, length); });
+    for (common::BroadcastReader& shard : events) {
+      shard.poll(
+          [&](char* message, const std::size_t length) { gateway.onEvent(message, length); });
+    }
     gateway.onTick();
   };
 

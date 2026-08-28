@@ -115,19 +115,34 @@ int main(const int count, char** values) {
     return 2;
   }
 
-  // The event stream is a broadcast ring: this publisher holds one seat among the feed's readers.
-  common::BroadcastReader in = [&] {
+  // One seat per shard: the event stream may arrive as several broadcast rings, and the
+  // builder merges them into one public feed, order-insensitive across instruments because each
+  // instrument's events all come from one shard in order.
+  const auto joinPatiently = [](const std::string& path) {
     for (int attempt = 0; attempt < 300; attempt++) {
-      if (std::filesystem::exists(inPath)) {
+      if (std::filesystem::exists(path)) {
         try {
-          return common::BroadcastReader::attach(inPath);
+          return common::BroadcastReader::attach(path);
         } catch (const std::exception&) {
         }
       }
       ::usleep(100'000);
     }
-    throw std::runtime_error("gave up waiting for " + inPath);
-  }();
+    throw std::runtime_error("gave up waiting for " + path);
+  };
+  std::vector<common::BroadcastReader> in;
+  {
+    std::size_t at = 0;
+    while (at < inPath.size()) {
+      const std::size_t comma = inPath.find(',', at);
+      in.push_back(joinPatiently(
+          inPath.substr(at, comma == std::string::npos ? std::string::npos : comma - at)));
+      if (comma == std::string::npos) {
+        break;
+      }
+      at = comma + 1;
+    }
+  }
 
   UdpSink a(aAddress);
   UdpSink b(bAddress);
@@ -174,8 +189,11 @@ int main(const int count, char** values) {
   char scratch[2048];
 
   while (stopped == 0) {
-    const std::size_t consumed =
-        in.poll([&](char* message, const std::size_t length) { builder.onEvent(message, length); });
+    std::size_t consumed = 0;
+    for (common::BroadcastReader& shard : in) {
+      consumed += shard.poll(
+          [&](char* message, const std::size_t length) { builder.onEvent(message, length); });
+    }
     if (consumed > 0) {
       publisher.flush();
       lastSend = wall.now();

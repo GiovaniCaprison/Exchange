@@ -12,6 +12,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -47,11 +48,40 @@ class Partition {
  public:
   explicit Partition(Ring& ring) : feed_(ring), slab_(1 << 16) {}
 
+  // Deployment: which instruments this partition serves, empty meaning all of them, and its
+  // shard number, which namespaces every id it will ever assign in the top byte so no two
+  // shards mint the same one and every consumer can merge their event streams without a thought.
+  void serve(std::vector<std::uint32_t> instruments) { served_ = std::move(instruments); }
+
+  void shard(const std::uint32_t number) {
+    counters_.nextOrderId = (std::uint64_t{number} << 56) + 1;
+    counters_.nextExecutionId = (std::uint64_t{number} << 56) + 1;
+  }
+
+  bool serves(const std::uint32_t instrumentId) const {
+    if (served_.empty()) {
+      return true;
+    }
+    for (const std::uint32_t mine : served_) {
+      if (mine == instrumentId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   void onCommand(char* buffer, const std::size_t offset, const std::size_t length) {
     sbe::MessageHeader header;
     const std::size_t end = offset + length;
     header.wrap(buffer, offset, 0, end);
     const std::size_t body = offset + sbe::MessageHeader::encodedLength();
+    // Another shard's instrument is another shard's business; instrument zero is everyone's,
+    // because the venue-wide sweep addresses every book wherever it lives.
+    std::uint32_t addressed = 0;
+    std::memcpy(&addressed, buffer + body + 16, sizeof addressed);
+    if (addressed != 0 && !serves(addressed)) {
+      return;
+    }
     switch (header.templateId()) {
       case sbe::NewOrder::sbeTemplateId(): {
         auto command = decoded<sbe::NewOrder>(buffer, body, header, end);
@@ -216,6 +246,8 @@ class Partition {
         definition.maxPrice, definition.bandWidth, definition.openingReference,
         definition.proRata));
   }
+
+  std::vector<std::uint32_t> served_;
 
   Engine<Ring>& engineOf(const std::uint32_t instrumentId) {
     for (std::size_t at = 0; at < instruments_.size(); at++) {

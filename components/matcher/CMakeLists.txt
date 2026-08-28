@@ -36,6 +36,9 @@ target_link_libraries(matcher-ring PRIVATE exchange-matcher Catch2::Catch2WithMa
 add_executable(matcher-broadcast test/broadcast_test.cpp)
 target_link_libraries(matcher-broadcast PRIVATE exchange-matcher Catch2::Catch2WithMain)
 
+add_executable(matcher-shard test/shard_test.cpp)
+target_link_libraries(matcher-shard PRIVATE matcher-test-harness Catch2::Catch2WithMain)
+
 # The proofs that run as binaries: the allocation probe whose allocator counts after
 # initialisation, the flow generator that writes the shared journal, and the measurement harness.
 add_executable(allocation-probe test/allocation_probe_main.cpp)
@@ -60,4 +63,5 @@ catch_discover_tests(matcher-attribution)
 catch_discover_tests(matcher-determinism)
 catch_discover_tests(matcher-ring)
 catch_discover_tests(matcher-broadcast)
+catch_discover_tests(matcher-shard)
 catch_discover_tests(matcher-allocation)
