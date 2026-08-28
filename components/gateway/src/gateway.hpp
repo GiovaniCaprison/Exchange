@@ -44,6 +44,7 @@
 #include "exchange_protocol/ReplaceOrder.h"
 #include "exchange_protocol/SessionEnded.h"
 #include "exchange_protocol/SessionHeartbeat.h"
+#include "ownership.hpp"
 #include "risk.hpp"
 #include "sequencer.hpp"
 #include "wire.hpp"
@@ -66,7 +67,6 @@ class Gateway {
  public:
   static constexpr std::size_t CONNECTIONS = 64;
   static constexpr std::uint64_t PENDING = 1 << 14;
-  static constexpr std::size_t ORDERS = 1 << 17;
 
   Gateway(SubmitRing& submissions, Clock& clock, RiskGate& risk, const std::uint32_t gatewayId,
           std::vector<Credential> credentials,
@@ -91,8 +91,6 @@ class Gateway {
     }
     pending_.resize(PENDING);
     pendingArena_.resize(std::size_t{1} << 22);
-    orderKeys_.assign(ORDERS, 0);
-    orderOwners_.resize(ORDERS);
     lastAck_ = clock_.now();
     newOrderParticipantAt_ = participantOffsetOf<sbe::NewOrder>();
     cancelParticipantAt_ = participantOffsetOf<sbe::CancelOrder>();
@@ -226,7 +224,7 @@ class Gateway {
         sbe::OrderAccepted event;
         event.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
                             length);
-        remember(event.orderId(), event.participantId());
+        owners_.accepted(event.orderId(), event.participantId(), event.context().instrumentId());
         deliver(event.participantId(), message, length);
         break;
       }
@@ -250,25 +248,19 @@ class Gateway {
           deliver(resting, message, length);
         }
         // A rested order that filled whole is done; the delivery came first.
-        const long at = find(event.restingOrderId());
-        if (at >= 0) {
-          Owned& order = orderOwners_[static_cast<std::size_t>(at)];
-          order.remaining -= event.quantity();
-          if (order.rested && order.remaining <= 0) {
-            eraseOrder(static_cast<std::size_t>(at));
-          }
-        }
+        owners_.onExecuted(event.restingOrderId(), event.quantity());
         break;
       }
       case sbe::OrderRested::sbeTemplateId(): {
         sbe::OrderRested event;
         event.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
                             length);
-        const long at = find(event.orderId());
+        const long at = owners_.find(event.orderId());
         if (at >= 0) {
-          deliver(orderOwners_[static_cast<std::size_t>(at)].participant, message, length);
-          orderOwners_[static_cast<std::size_t>(at)].rested = true;
-          orderOwners_[static_cast<std::size_t>(at)].remaining = event.quantity();
+          deliver(owners_.at(at).participant, message, length);
+          owners_.onRested(event.orderId(),
+                           static_cast<std::uint8_t>(event.side() == sbe::Side::BUY ? 0 : 1),
+                           event.price(), event.quantity());
         } else {
           unroutable_++;
         }
@@ -278,10 +270,10 @@ class Gateway {
         sbe::OrderReduced event;
         event.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
                             length);
-        const long at = find(event.orderId());
+        const long at = owners_.find(event.orderId());
         if (at >= 0) {
-          deliver(orderOwners_[static_cast<std::size_t>(at)].participant, message, length);
-          orderOwners_[static_cast<std::size_t>(at)].remaining = event.quantity();
+          deliver(owners_.at(at).participant, message, length);
+          owners_.onReduced(event.orderId(), event.quantity());
         } else {
           unroutable_++;
         }
@@ -291,12 +283,10 @@ class Gateway {
         sbe::OrderRemoved event;
         event.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
                             length);
-        const long at = find(event.orderId());
+        const long at = owners_.find(event.orderId());
         if (at >= 0) {
-          deliver(orderOwners_[static_cast<std::size_t>(at)].participant, message, length);
-          if (event.reason() != sbe::RemoveReason::REPLACED) {
-            eraseOrder(static_cast<std::size_t>(at));
-          }
+          deliver(owners_.at(at).participant, message, length);
+          owners_.onRemoved(event.orderId(), event.reason() == sbe::RemoveReason::REPLACED);
         } else {
           unroutable_++;
         }
@@ -666,84 +656,15 @@ class Gateway {
     arenaIn_ += record;
   }
 
-  // Ownership hygiene: entries leave when their orders die, and an aggressor that filled whole,
-  // which no removal ever names, ages out by orderId distance on a periodic sweep. A table whose
-  // entries never leave saturates however big it is, and a saturated open table probes forever;
-  // this used to be a hard stop at three quarters full, which was honest but was still a venue
-  // that dies on its busiest day.
-  struct Owned {
-    std::uint64_t orderId = 0;
-    std::uint32_t participant = 0;
-    std::int64_t remaining = 0;
-    bool rested = false;
-  };
-
-  static constexpr std::uint64_t AGE_HORIZON = 1 << 16;
-  static constexpr std::size_t SWEEP_EVERY = 4096;
-
-  void remember(const std::uint64_t orderId, const std::uint32_t participant) {
-    std::size_t slot = orderId & (ORDERS - 1);
-    while (orderKeys_[slot] != 0 && orderKeys_[slot] != orderId) {
-      slot = (slot + 1) & (ORDERS - 1);
-    }
-    orderKeys_[slot] = orderId;
-    orderOwners_[slot] = {orderId, participant, 0, false};
-    if (orderId > newestOrderId_) {
-      newestOrderId_ = orderId;
-    }
-    if (++orderCount_ % SWEEP_EVERY == 0) {
-      sweepTable();
-    }
-  }
-
-  long find(const std::uint64_t orderId) {
-    std::size_t slot = orderId & (ORDERS - 1);
-    while (orderKeys_[slot] != 0) {
-      if (orderKeys_[slot] == orderId) {
-        return static_cast<long>(slot);
-      }
-      slot = (slot + 1) & (ORDERS - 1);
-    }
-    return -1;
-  }
-
+  // Ownership is the shared discipline in components/common/ownership.hpp, the saturation
+  // lesson written down once; the gateway only keeps its own count of the unroutable.
   std::uint32_t ownerOf(const std::uint64_t orderId) {
-    const long at = find(orderId);
+    const long at = owners_.find(orderId);
     if (at < 0) {
       unroutable_++;
       return NOBODY;
     }
-    return orderOwners_[static_cast<std::size_t>(at)].participant;
-  }
-
-  void eraseOrder(std::size_t at) {
-    orderKeys_[at] = 0;
-    std::size_t hole = at;
-    std::size_t probe = (at + 1) & (ORDERS - 1);
-    while (orderKeys_[probe] != 0) {
-      const std::size_t wants = orderKeys_[probe] & (ORDERS - 1);
-      const bool movable = ((probe - wants) & (ORDERS - 1)) >= ((probe - hole) & (ORDERS - 1));
-      if (movable) {
-        orderKeys_[hole] = orderKeys_[probe];
-        orderOwners_[hole] = orderOwners_[probe];
-        orderKeys_[probe] = 0;
-        hole = probe;
-      }
-      probe = (probe + 1) & (ORDERS - 1);
-    }
-  }
-
-  void sweepTable() {
-    if (newestOrderId_ <= AGE_HORIZON) {
-      return;
-    }
-    const std::uint64_t oldest = newestOrderId_ - AGE_HORIZON;
-    for (std::size_t at = 0; at < ORDERS; at++) {
-      if (orderKeys_[at] != 0 && !orderOwners_[at].rested && orderOwners_[at].orderId < oldest) {
-        eraseOrder(at);
-        at--;
-      }
-    }
+    return owners_.at(at).participant;
   }
 
   void deliver(const std::uint32_t participant, const char* message, const std::size_t length) {
@@ -807,10 +728,7 @@ class Gateway {
   std::uint64_t nextGatewaySequence_ = 1;
   std::uint64_t ackedUpTo_ = 0;
   std::uint64_t lastAck_ = 0;
-  std::vector<std::uint64_t> orderKeys_;
-  std::vector<Owned> orderOwners_;
-  std::size_t orderCount_ = 0;
-  std::uint64_t newestOrderId_ = 0;
+  common::Ownership owners_;
   std::size_t newOrderParticipantAt_ = 0;
   std::size_t cancelParticipantAt_ = 0;
   std::size_t replaceParticipantAt_ = 0;
