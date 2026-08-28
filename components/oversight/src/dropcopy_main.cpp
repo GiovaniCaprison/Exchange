@@ -98,7 +98,19 @@ int main(const int count, char** values) {
     return 2;
   }
 
-  common::BroadcastReader events = joinPatiently(eventsPath);
+  std::vector<common::BroadcastReader> events;
+  {
+    std::size_t at = 0;
+    while (at < eventsPath.size()) {
+      const std::size_t comma = eventsPath.find(',', at);
+      events.push_back(joinPatiently(
+          eventsPath.substr(at, comma == std::string::npos ? std::string::npos : comma - at)));
+      if (comma == std::string::npos) {
+        break;
+      }
+      at = comma + 1;
+    }
+  }
   exchange::sequencer::WallClock clock;
   watch::DropCopy<exchange::sequencer::WallClock> machine(clock, watchersOf(watchers));
 
@@ -182,7 +194,10 @@ int main(const int count, char** values) {
         }
       }
     }
-    events.poll([&](char* message, const std::size_t length) { machine.onEvent(message, length); });
+    for (common::BroadcastReader& shard : events) {
+      shard.poll(
+          [&](char* message, const std::size_t length) { machine.onEvent(message, length); });
+    }
     machine.onTick();
   }
   return 0;

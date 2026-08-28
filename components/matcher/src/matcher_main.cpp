@@ -124,12 +124,19 @@ int replay(const std::string& journalPath, const std::string& eventsPath,
 }
 
 int live(const std::string& inPath, const std::string& outPath, const std::string& journalPath,
-         const std::string& restorePath, const std::string& snapshotPath) {
+         const std::string& restorePath, const std::string& snapshotPath,
+         const std::vector<std::uint32_t>& instruments, const std::uint32_t shard) {
   // Events broadcast: the gateway, the market data publisher and the operations scheduler all
   // read this ring, each on its own seat, none of them able to stall the matcher.
   common::BroadcastRing out = common::BroadcastRing::create(outPath, 1 << 24);
   common::SpscRing in = common::SpscRing::attach(inPath);
   matching::Partition<common::BroadcastRing> partition(out);
+  if (!instruments.empty()) {
+    partition.serve(instruments);
+  }
+  if (shard != 0) {
+    partition.shard(shard);
+  }
   std::uint64_t from = 0;
   if (!restorePath.empty()) {
     from = common::snapshot::restore(restorePath, partition);
@@ -140,6 +147,14 @@ int live(const std::string& inPath, const std::string& outPath, const std::strin
   while (stopped == 0) {
     in.poll([&](char* message, const std::size_t length) {
       if (sequenceOf(message, length) <= from) {
+        return;
+      }
+      // Another shard's commands never enter this shard's journal, so a shard's journal replays
+      // through the same partition with no filter at all.
+      std::uint32_t addressed = 0;
+      std::memcpy(&addressed, message + exchange::protocol::MessageHeader::encodedLength() + 16,
+                  sizeof addressed);
+      if (addressed != 0 && !partition.serves(addressed)) {
         return;
       }
       journal.append(message, static_cast<std::uint32_t>(length));
@@ -163,6 +178,21 @@ int main(const int count, char** values) {
   const std::string snapshotPath = argument(count, values, "--snapshot");
   const std::string snapshotAt = argument(count, values, "--snapshot-at");
   const std::string stopAt = argument(count, values, "--stop-at");
+  const std::string instrumentList = argument(count, values, "--instruments");
+  const std::string shard = argument(count, values, "--shard");
+  std::vector<std::uint32_t> instruments;
+  {
+    std::size_t at = 0;
+    while (at < instrumentList.size()) {
+      const std::size_t comma = instrumentList.find(',', at);
+      instruments.push_back(static_cast<std::uint32_t>(std::stoul(
+          instrumentList.substr(at, comma == std::string::npos ? std::string::npos : comma - at))));
+      if (comma == std::string::npos) {
+        break;
+      }
+      at = comma + 1;
+    }
+  }
 
   if (!journalPath.empty() && !eventsPath.empty()) {
     return replay(journalPath, eventsPath, restorePath, snapshotPath,
@@ -170,12 +200,14 @@ int main(const int count, char** values) {
                   stopAt.empty() ? 0 : std::stoull(stopAt));
   }
   if (!inPath.empty() && !outPath.empty() && !journalPath.empty()) {
-    return live(inPath, outPath, journalPath, restorePath, snapshotPath);
+    return live(inPath, outPath, journalPath, restorePath, snapshotPath, instruments,
+                shard.empty() ? 0 : static_cast<std::uint32_t>(std::stoul(shard)));
   }
   std::fprintf(stderr,
                "usage: matcher --journal J --events OUT [--restore SNAP]\n"
                "               [--snapshot SNAP --snapshot-at N] [--stop-at N]\n"
                "       matcher --in RING --out RING --journal J [--restore SNAP]"
-               " [--snapshot SNAP]\n");
+               " [--snapshot SNAP]\n"
+               "               [--instruments 1,3,5 --shard N]\n");
   return 2;
 }

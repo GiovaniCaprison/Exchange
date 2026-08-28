@@ -126,7 +126,11 @@ int main(const int count, char** values) {
 
   common::SpscRing submissions = common::SpscRing::create(submissionsPath, 1 << 20);
   common::SpscRing acks = attachPatiently(acksPath);
-  common::BroadcastReader events = joinPatiently(eventsPath);
+  // One seat per shard: the event stream may arrive as several broadcast rings.
+  std::vector<common::BroadcastReader> events;
+  for (const std::string& one : split(eventsPath, ',')) {
+    events.push_back(joinPatiently(one));
+  }
   exchange::sequencer::WallClock wall;
 
   ops::Config config;
@@ -201,8 +205,10 @@ int main(const int count, char** values) {
       }
     }
     acks.poll([&](char* message, const std::size_t length) { scheduler.onAck(message, length); });
-    events.poll(
-        [&](char* message, const std::size_t length) { scheduler.onEvent(message, length); });
+    for (common::BroadcastReader& shard : events) {
+      shard.poll(
+          [&](char* message, const std::size_t length) { scheduler.onEvent(message, length); });
+    }
     scheduler.onTick();
     ::usleep(1'000);
   }

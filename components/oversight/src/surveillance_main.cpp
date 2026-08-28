@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include "broadcast_ring.hpp"
 #include "exchange_protocol/SurveillanceAlert.h"
@@ -85,7 +86,19 @@ int main(const int count, char** values) {
     config.layeringLevels = static_cast<std::uint32_t>(std::stoul(levels));
   }
 
-  common::BroadcastReader events = joinPatiently(eventsPath);
+  std::vector<common::BroadcastReader> events;
+  {
+    std::size_t at = 0;
+    while (at < eventsPath.size()) {
+      const std::size_t comma = eventsPath.find(',', at);
+      events.push_back(joinPatiently(
+          eventsPath.substr(at, comma == std::string::npos ? std::string::npos : comma - at)));
+      if (comma == std::string::npos) {
+        break;
+      }
+      at = comma + 1;
+    }
+  }
   common::journal::Writer journal(alertsPath);
   auto sink = [&](char* bytes, const std::size_t length) {
     journal.append(bytes, static_cast<std::uint32_t>(length));
@@ -108,9 +121,12 @@ int main(const int count, char** values) {
   std::signal(SIGINT, onSignal);
   std::signal(SIGTERM, onSignal);
   while (stopped == 0) {
-    if (events.poll([&](char* message, const std::size_t length) {
-          watching.onEvent(message, length);
-        }) == 0) {
+    std::size_t consumed = 0;
+    for (common::BroadcastReader& shard : events) {
+      consumed += shard.poll(
+          [&](char* message, const std::size_t length) { watching.onEvent(message, length); });
+    }
+    if (consumed == 0) {
       ::usleep(1'000);
     }
   }

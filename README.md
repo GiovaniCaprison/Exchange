@@ -125,7 +125,11 @@ build/components/ecosystem/bot --connect 36201 --participant 8 --secret 43 --fee
 
 The gateway and the scheduler create their submission rings and wait for the rest; the sequencer
 attaches them and makes the order; the matcher broadcasts events; market data serves the feed,
-retransmission and snapshots; the bots trade. The whole arrangement is also a merge gate: the
+retransmission and snapshots; the bots trade. To shard, run one matcher per instrument set,
+`--instruments 1,3 --shard 1` and `--instruments 2,4 --shard 2` on the same sequenced stream,
+each broadcasting its own event ring; every consumer's `--events` and `--in` take a comma list
+of rings, and the shard number rides the top byte of every id it mints, so merged streams never
+collide. The whole arrangement is also a merge gate: the
 ecosystem suite runs exactly this venue as processes and holds it to its word by the crowd's own
 exit code.
 

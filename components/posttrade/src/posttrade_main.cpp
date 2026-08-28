@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include "broadcast_ring.hpp"
 #include "ledger.hpp"
@@ -59,15 +60,30 @@ int main(const int count, char** values) {
     return 2;
   }
 
-  common::BroadcastReader events = joinPatiently(eventsPath);
+  std::vector<common::BroadcastReader> events;
+  {
+    std::size_t at = 0;
+    while (at < eventsPath.size()) {
+      const std::size_t comma = eventsPath.find(',', at);
+      events.push_back(joinPatiently(
+          eventsPath.substr(at, comma == std::string::npos ? std::string::npos : comma - at)));
+      if (comma == std::string::npos) {
+        break;
+      }
+      at = comma + 1;
+    }
+  }
   exchange::posttrade::Ledger ledger;
 
   std::signal(SIGINT, onSignal);
   std::signal(SIGTERM, onSignal);
   while (stopped == 0 && !ledger.dayIsDone()) {
-    if (events.poll([&](char* message, const std::size_t length) {
-          ledger.onEvent(message, length);
-        }) == 0) {
+    std::size_t consumed = 0;
+    for (common::BroadcastReader& shard : events) {
+      consumed += shard.poll(
+          [&](char* message, const std::size_t length) { ledger.onEvent(message, length); });
+    }
+    if (consumed == 0) {
       ::usleep(1'000);
     }
   }
