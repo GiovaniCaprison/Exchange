@@ -1,0 +1,7 @@
+# The codegen gate's ceilings: per watched function, a substring of its demangled name, the
+# blessed instruction count, and the blessed escape count. Blessed generously today because
+# instruction counts drift a little across compiler versions; the campaign tightens these into
+# budgets once the box gives normal a number (docs/PRACTICE.md). Raising a ceiling is a
+# deliberate act that belongs in the diff that needed it, with the ritual's report beside it.
+onCommand 360 12
+onSubmission 260 6
