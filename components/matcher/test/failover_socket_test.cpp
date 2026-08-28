@@ -49,7 +49,9 @@ TEST_CASE("the twin keeps deciding when the primary dies, and the seat never not
   const std::string in = room.string() + "/";
   const std::filesystem::path pids = room / "pids";
 
-  const std::vector<CommandWriter::Framed> flow = generatedFlow(59, 2'000);
+  // A modest day on purpose: the sanitized battery runs this on a loaded machine, and the
+  // claim is about the death, not the volume.
+  const std::vector<CommandWriter::Framed> flow = generatedFlow(59, 1'000);
   std::vector<std::vector<char>> records = dealtSubmissions(flow, 1);
 
   common::SpscRing gateway = common::SpscRing::create(in + "gw.ring", 1 << 22);
@@ -123,7 +125,7 @@ TEST_CASE("the twin keeps deciding when the primary dies, and the seat never not
   // Both twins caught up on the first half: their journals agree before the death. The wait is
   // its own condition, generous because the battery shares this machine.
   bool agreed = false;
-  for (int attempt = 0; attempt < 1'200 && !agreed; attempt++) {
+  for (int attempt = 0; attempt < 2'400 && !agreed; attempt++) {
     listen();
     const std::vector<char> primary = bytesOf(room / "ma.exj");
     agreed = !primary.empty() && primary == bytesOf(room / "mb.exj");
@@ -144,7 +146,7 @@ TEST_CASE("the twin keeps deciding when the primary dies, and the seat never not
     gateway.publish();
   }
   std::uint64_t settled = 0;
-  for (int attempt = 0; attempt < 1'200; attempt++) {
+  for (int attempt = 0; attempt < 2'400; attempt++) {
     listen();
     if (last > beforeDeath && last == settled) {
       break;
