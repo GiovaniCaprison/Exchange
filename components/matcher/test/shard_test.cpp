@@ -113,7 +113,7 @@ std::vector<std::pair<std::int64_t, std::int64_t>> ladderShape(const Partition<C
   std::vector<std::pair<std::int64_t, std::int64_t>> shape;
   const auto& engine = run.engine(instrument);
   for (const std::int32_t slot : engine.book().restingSlots()) {
-    if (run.slab().cold(slot).side == side) {
+    if (run.slab().cold(slot).side == static_cast<std::uint8_t>(side)) {
       shape.emplace_back(run.slab().cold(slot).clientOrderId, run.slab().hot(slot).displayed);
     }
   }
