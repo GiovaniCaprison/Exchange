@@ -350,6 +350,7 @@ class Gateway {
   std::uint64_t unroutable() const { return unroutable_; }
   std::uint64_t swept() const { return swept_; }
   std::uint64_t kills() const { return kills_; }
+  std::uint64_t exhausted() const { return exhausted_; }
 
  private:
   enum class State : std::uint8_t { FREE, AWAITING_LOGIN, ESTABLISHED, ENDED };
@@ -377,6 +378,7 @@ class Gateway {
     std::vector<std::size_t> offsets;
     std::vector<std::size_t> lengths;
     int boundTo = -1;
+    bool exhausted = false;
   };
 
   struct Pending {
@@ -518,6 +520,10 @@ class Gateway {
     }
     if (found->killed) {
       reject(connection, sbe::LoginRefusal::KILLED);
+      return;
+    }
+    if (streams_[streamAt].exhausted) {
+      reject(connection, sbe::LoginRefusal::EXHAUSTED);
       return;
     }
     Stream& stream = streams_[streamAt];
@@ -673,8 +679,21 @@ class Gateway {
         continue;
       }
       Stream& stream = streams_[at];
+      if (stream.exhausted) {
+        return;
+      }
       if (stream.log.size() + length + 2 > LOG_BYTES || stream.offsets.size() == LOG_ENTRIES) {
-        throw std::runtime_error("a session stream overflowed; size the log for the session");
+        // The retained stream is sized for the session, and a session that outgrows it ends,
+        // politely and alone: the venue does not die of one participant's day, and byte-exact
+        // replay cannot be promised once retention stops, so the door answers EXHAUSTED until
+        // tomorrow. The unclean end sweeps a cancel-on-disconnect participant's books, which is
+        // the safe reading of a participant who can no longer be told anything.
+        stream.exhausted = true;
+        exhausted_++;
+        if (stream.boundTo >= 0) {
+          end(connections_[static_cast<std::size_t>(stream.boundTo)], true);
+        }
+        return;
       }
       const std::size_t start = stream.log.size();
       const std::uint16_t prefix = static_cast<std::uint16_t>(length);
@@ -741,6 +760,7 @@ class Gateway {
   std::uint64_t gateRefusals_ = 0;
   std::uint64_t swept_ = 0;
   std::uint64_t kills_ = 0;
+  std::uint64_t exhausted_ = 0;
 };
 
 // The participantId field offsets, one specialisation per command the vocabulary permits.

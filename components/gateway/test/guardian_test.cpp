@@ -202,3 +202,42 @@ TEST_CASE("the ownership table breathes through the day that used to be its hard
   wired.gateway.onEvent(young.data(), young.size());
   CHECK(wired.gateway.swept() == 0);
 }
+
+TEST_CASE("a session that outgrows its stream ends alone, and the venue does not") {
+  Wired wired;
+  const int slot = wired.establish(7, 42);
+
+  // A day too big for the retained stream: the sixty-five-thousandth-and-some event exhausts
+  // it. The session ends politely, cancel on disconnect sweeps the books, and the venue lives.
+  for (std::uint64_t orderId = 1; wired.gateway.exhausted() == 0; orderId++) {
+    REQUIRE(orderId <= 70'000);
+    std::vector<char> event = acceptedEvent(orderId, 7, orderId);
+    wired.gateway.onEvent(event.data(), event.size());
+    const auto [bytes, length] = wired.gateway.outbound(slot);
+    wired.gateway.drained(slot, length);
+  }
+  CHECK(wired.gateway.exhausted() == 1);
+  CHECK(wired.gateway.wantsClose(slot));
+  CHECK(wired.gateway.swept() == 1);
+  wired.gateway.closed(slot);
+
+  // The door answers with the exhaustion's own word until tomorrow.
+  const int refused = wired.gateway.opened();
+  std::vector<char> login = loginBytes(7, 42, 0);
+  wired.gateway.received(refused, login.data(), login.size());
+  const auto [answer, answerLength] = wired.gateway.outbound(refused);
+  const auto refusal = unframed(answer, answerLength);
+  REQUIRE(refusal.size() == 1);
+  REQUIRE(refusal[0].first == sbe::LoginRejected::sbeTemplateId());
+  sbe::MessageHeader wrap;
+  std::vector<char> copy = refusal[0].second;
+  wrap.wrap(copy.data(), 0, 0, copy.size());
+  sbe::LoginRejected rejected;
+  rejected.wrapForDecode(copy.data(), wrap.encodedLength(), wrap.blockLength(), wrap.version(),
+                         copy.size());
+  CHECK(rejected.reason() == sbe::LoginRefusal::EXHAUSTED);
+
+  // The other participant's day continues untouched.
+  const int fine = wired.establish(8, 43);
+  CHECK(!wired.gateway.wantsClose(fine));
+}
