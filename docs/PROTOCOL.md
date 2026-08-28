@@ -358,6 +358,41 @@ SnapshotComplete naming the feed sequence to join live at, Glimpse's shape (Nasd
 specification). A conflated top of book derives from the same builder on an interval, because
 most consumers want the touch and full depth is the price of the few who want everything.
 
+## The end of the day
+
+The venue's statement to the clearing house is two files, written at the close by the post-trade
+ledger, deterministic in content and in order so a replayed day writes byte-identical files. A
+file an external party settles against is a protocol, so the formats live here beside the
+journal's.
+
+The trades file is CSV with a header row, one row per print in sequence order:
+
+| Column | Meaning |
+|---|---|
+| executionId | the print's engine id |
+| sequence | the answering command's place in the global order |
+| timestamp | the sequencer's stamp, nanoseconds |
+| instrumentId | the book it printed on |
+| price | scaled integer, priceScale implied decimals |
+| quantity | lots |
+| buyer | participantId of the buying side |
+| seller | participantId of the selling side |
+
+The positions file is CSV with a header row, one row per (participant, instrument) that traded,
+ordered by participant then instrument:
+
+| Column | Meaning |
+|---|---|
+| participantId | whose account |
+| instrumentId | which book |
+| position | signed net lots, bought minus sold |
+| bought | lots bought |
+| sold | lots sold |
+| cash | signed scaled-integer cash flow at traded prices, sells positive |
+
+Conservation is the file's own audit: positions sum to zero per instrument and cash sums to zero
+across the venue, because every trade moved two accounts by equal and opposite amounts.
+
 ## The ring
 
 On-box transport is a single-producer single-consumer ring over a mapped file. Records are eight

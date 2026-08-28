@@ -3,13 +3,6 @@
 Everything worth building after the arc, each entry small here and owed its own page when its
 turn comes. Nothing on this list blocks anything above it.
 
-## Post-trade
-
-Trade capture into end-of-day files toward a clearing house, and a position ledger, both derived
-from the event stream. The venue hands the hard part to a CCP in reality; the study ground is
-CPMI-IOSCO, Principles for Financial Market Infrastructures, 2012, which describes what the CCP
-owes the world, and DTCC's public materials for how equities actually clear and settle.
-
 ## Off-box transport
 
 The sequenced stream between machines: Aeron (Real Logic) as the built reference, kernel bypass

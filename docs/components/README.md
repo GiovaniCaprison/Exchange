@@ -29,7 +29,8 @@ before the next begins.
 | 6 | [operations](operations.md) | the market's clock: sessions, auctions on schedule, volatility halts |
 | 7 | [ecosystem](ecosystem.md) | clients and bots that make the venue trade, and the wire-to-wire campaign |
 | 8 | [oversight](oversight.md) | the venue answerable: drop copy to the responsible, surveillance over the stream |
-| 9 | [horizon](horizon.md) | everything after: post-trade, off-box transport, other engines |
+| 9 | [posttrade](posttrade.md) | the day handed over: the trade tape, the position ledger, and conservation as law |
+| 10 | [horizon](horizon.md) | everything after: off-box transport, other engines |
 
 ## The discipline every component carries
 
@@ -48,6 +49,7 @@ appending futures to them. The ledger of what to touch:
 
 - oversight: consumed; the alert vocabulary, the oversight plane and the consumer list landed
   with the component.
+- posttrade: consumed; the end-of-day file formats landed in PROTOCOL.md with the component.
 - horizon: whatever a horizon item touches when it stops being horizon.
 
 ## Reading that spans the whole programme
