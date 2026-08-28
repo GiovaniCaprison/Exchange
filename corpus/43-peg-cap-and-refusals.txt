@@ -1,0 +1,28 @@
+# The cap is a hard bound the peg never crosses, and the grammar is tight: a peg lives only in
+# continuous trading, never demands immediacy, never waits on a trigger, never posts only, never
+# carries a minimum, and is amended by cancel and re-enter, not by replace. Leaving continuous
+# trading expires every peg.
+INSTRUMENT tick=5 lot=1 min=1 max=1000000 band=500 open=100000 alloc=PRICE_TIME
+NEW BUY PEGGED GTC 0 10 #1
+REJECTED #1 STATE_NOT_PERMITTED
+SESSION CONTINUOUS
+STATE CONTINUOUS
+NEW BUY LIMIT GTC 99990 5 #2
+ACCEPTED #2 order=1
+RESTED order=1 BUY 99990 5
+NEW BUY PEGGED GTC 99980 10 #3
+ACCEPTED #3 order=2
+RESTED order=2 BUY 99980 10
+NEW BUY PEGGED IOC 0 10 #4
+REJECTED #4 INVALID_FIELDS
+NEW BUY PEGGED GTC 0 10 trigger=99000 #5
+REJECTED #5 INVALID_FIELDS
+NEW BUY PEGGED GTC 0 10 min=5 #6
+REJECTED #6 INVALID_FIELDS
+NEW BUY PEGGED GTC 0 10 POST_ONLY #7
+REJECTED #7 INVALID_FIELDS
+REPLACE #3 15 99985
+REJECTED #3 INVALID_FIELDS
+SESSION CLOSING_AUCTION
+STATE CLOSING_AUCTION
+REMOVED order=2 10 EXPIRED

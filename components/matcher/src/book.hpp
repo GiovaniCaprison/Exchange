@@ -117,6 +117,25 @@ class Book {
     }
   }
 
+  // The peg's reference: the best displayed price on a side with one order's own display
+  // removed, or zero when nothing else displays there. Self-exclusion is what lets a peg follow
+  // the market down instead of ratcheting on its own quote.
+  std::int64_t bestPriceExcluding(const std::int32_t side, const std::int32_t ownRank,
+                                  const std::int64_t ownDisplayed) const {
+    const Ladder& mine = ladder(side);
+    std::int32_t rank = mine.best();
+    if (rank == Ladder::EMPTY) {
+      return 0;
+    }
+    if (rank == ownRank && mine.displayedAt(rank) - ownDisplayed <= 0) {
+      rank = mine.occupiedFrom(rank + 1);
+      if (rank == Ladder::EMPTY) {
+        return 0;
+      }
+    }
+    return priceOfRank(side, rank);
+  }
+
   void all(std::vector<std::int32_t>& into) const {
     for (std::size_t at = 0; at <= nameMask_; at++) {
       const std::uint64_t entry = names_[(at << 1) + 1];

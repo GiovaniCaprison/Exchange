@@ -1,0 +1,27 @@
+# A primary peg joins the best bid, follows it up when someone improves, and follows it back
+# down when the improvement leaves, because its reference excludes its own quote. It is real
+# liquidity while it rests: the seller that hits the level fills the peg like anyone else, and
+# when the fills leave the peg alone on its side, its reference is gone and it parks.
+INSTRUMENT tick=5 lot=1 min=1 max=1000000 band=500 open=100000 alloc=PRICE_TIME
+SESSION CONTINUOUS
+STATE CONTINUOUS
+NEW BUY LIMIT GTC 99990 10 #1
+ACCEPTED #1 order=1
+RESTED order=1 BUY 99990 10
+NEW BUY PEGGED GTC 0 20 #2
+ACCEPTED #2 order=2
+RESTED order=2 BUY 99990 20
+NEW BUY LIMIT GTC 99995 5 #3
+ACCEPTED #3 order=3
+RESTED order=3 BUY 99995 5
+REMOVED order=2 20 REPLACED
+RESTED order=2 BUY 99995 20
+CANCEL #3
+REMOVED order=3 5 CANCELLED
+REMOVED order=2 20 REPLACED
+RESTED order=2 BUY 99990 20
+NEW SELL LIMIT IOC 99990 25 #4
+ACCEPTED #4 order=4
+EXECUTED exec=1 aggressor=4 resting=1 99990 10
+EXECUTED exec=2 aggressor=4 resting=2 99990 15
+REMOVED order=2 5 REPLACED

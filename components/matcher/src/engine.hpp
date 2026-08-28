@@ -61,6 +61,7 @@ class Engine {
     gathered_.reserve(1024);
     buys_.reserve(4096);
     sells_.reserve(4096);
+    pegs_.reserve(1 << 14);
   }
 
   // Order entry -------------------------------------------------------------------------------
@@ -82,6 +83,7 @@ class Engine {
     taker.postOnly = command.flags().postOnly();
     taker.auctionOnly = command.flags().auctionOnly();
     const std::int64_t price = command.price();
+    taker.pegCap = command.pricing() == sbe::Pricing::PEGGED ? price : 0;
     const std::int64_t triggerPrice = command.triggerPrice();
 
     const std::int64_t verdict = refusalOrTick(taker, price, triggerPrice);
@@ -94,6 +96,15 @@ class Engine {
     taker.id = counters_.nextOrderId++;
     feed_.accepted(taker.id, clientOrderId, participantId);
 
+    if (taker.pricing == PEGGED) {
+      // A peg enters parked and the judgment that runs after every command rests it wherever
+      // the reference stands, which keeps entry and repricing one code path.
+      const std::int32_t slot = place(taker, ++counters_.arrival, 0);
+      slab_.hot(slot).tick = -1;
+      pegs_.push_back({slot, taker.id});
+      settlePegs();
+      return;
+    }
     if (triggerPrice != 0) {
       // A stop rests in the trigger book and is not book liquidity. It is the one entry path that
       // writes the slab before matching, because a waiting stop has to live somewhere.
@@ -101,6 +112,7 @@ class Engine {
       triggers_.add(slot);
       // A stop whose price the market has already reached is due now.
       fireTriggers();
+      settlePegs();
       return;
     }
     if (state_ == CONTINUOUS) {
@@ -108,6 +120,7 @@ class Engine {
       fireTriggers();
     }
     settle(taker);
+    settlePegs();
   }
 
   void cancel(const std::uint64_t clientOrderId, const std::uint32_t participantId) {
@@ -124,6 +137,7 @@ class Engine {
       slab_.release(resting);
       feed_.removed(id, displayed, sbe::RemoveReason::CANCELLED);
       reportIndicative();
+      settlePegs();
       return;
     }
     const std::int32_t stop = triggers_.named(participantId, clientOrderId);
@@ -135,6 +149,19 @@ class Engine {
       slab_.release(stop);
       feed_.removed(id, remaining, sbe::RemoveReason::CANCELLED);
       return;
+    }
+    // A parked peg rests in neither book nor trigger file; it waits in the peg list alone.
+    for (const Peg& peg : pegs_) {
+      if (slab_.hot(peg.slot).id != peg.orderId || slab_.hot(peg.slot).tick >= 0) {
+        continue;
+      }
+      if (slab_.cold(peg.slot).participantId == participantId &&
+          slab_.cold(peg.slot).clientOrderId == clientOrderId) {
+        const std::int64_t remaining = slab_.hot(peg.slot).remaining;
+        slab_.release(peg.slot);
+        feed_.removed(peg.orderId, remaining, sbe::RemoveReason::CANCELLED);
+        return;
+      }
     }
     feed_.rejected(clientOrderId, participantId, sbe::RejectReason::UNKNOWN_ORDER);
   }
@@ -148,6 +175,11 @@ class Engine {
     const std::int32_t resting = book_.named(participantId, clientOrderId);
     if (resting == 0) {
       feed_.rejected(clientOrderId, participantId, sbe::RejectReason::UNKNOWN_ORDER);
+      return;
+    }
+    if (slab_.cold(resting).pricing == PEGGED) {
+      // A peg's price is the market's, not the client's: amending one is cancel and re-enter.
+      feed_.rejected(clientOrderId, participantId, sbe::RejectReason::INVALID_FIELDS);
       return;
     }
     const std::int64_t verdict = refusalOrTickForReplace(resting, quantity, price);
@@ -169,6 +201,7 @@ class Engine {
                               remainder - remainingBefore);
       feed_.reduced(hot.id, hot.displayed);
       reportIndicative();
+      settlePegs();
       return;
     }
     // Anything else is a removal and a fresh rest, keeping both ids and the display size the
@@ -189,6 +222,7 @@ class Engine {
     taker.timeInForce = cold.timeInForce;
     taker.postOnly = cold.postOnly;
     taker.auctionOnly = cold.auctionOnly != 0;
+    taker.pegCap = cold.pegCap;
     taker.limitRank = limitRankOf(taker);
     const std::int64_t shown = hot.displayed;
     book_.remove(cold.side, resting);
@@ -199,6 +233,7 @@ class Engine {
       fireTriggers();
     }
     settle(taker);
+    settlePegs();
   }
 
   void massCancel(const std::uint64_t clientOrderId, const std::uint32_t participantId) {
@@ -209,11 +244,20 @@ class Engine {
     gathered_.clear();
     book_.of(participantId, gathered_);
     triggers_.of(participantId, gathered_);
+    for (const Peg& peg : pegs_) {
+      if (slab_.hot(peg.slot).id == peg.orderId && slab_.hot(peg.slot).tick < 0 &&
+          slab_.cold(peg.slot).participantId == participantId) {
+        gathered_.push_back(peg.slot);
+      }
+    }
     sortByArrival(gathered_);
     for (const std::int32_t slot : gathered_) {
       const std::uint64_t id = slab_.hot(slot).id;
       if (slab_.cold(slot).triggerPrice != 0) {
         triggers_.remove(slot);
+        feed_.removed(id, slab_.hot(slot).remaining, sbe::RemoveReason::MASS_CANCELLED);
+      } else if (slab_.hot(slot).tick < 0) {
+        // A parked peg rests nowhere; it just stops waiting.
         feed_.removed(id, slab_.hot(slot).remaining, sbe::RemoveReason::MASS_CANCELLED);
       } else {
         book_.remove(slab_.cold(slot).side, slot);
@@ -222,9 +266,11 @@ class Engine {
       slab_.release(slot);
     }
     reportIndicative();
+    settlePegs();
   }
 
   void changeState(const std::int32_t entering) {
+    const bool leavingContinuous = state_ == CONTINUOUS && entering != CONTINUOUS;
     if (callPhase(state_) && entering != state_) {
       // Leaving a call phase is what runs the uncrossing, before the new state is reported.
       uncross();
@@ -235,6 +281,11 @@ class Engine {
     indicativeQuantity_ = 0;
     if (callPhase(state_)) {
       reportIndicative();
+    }
+    if (leavingContinuous) {
+      // A peg's reference is continuous trading's; when that ends, every peg expires, parked
+      // and resting alike, which is why no snapshot at a close ever holds one.
+      expirePegs();
     }
     if (state_ == CONTINUOUS) {
       // The call the auction-only orders lived for is over, filled or not: limit-on-open and
@@ -273,6 +324,73 @@ class Engine {
     }
   }
 
+  // The pegs: every live one, resting or parked, judged after every command that may have moved
+  // the reference. A slot proves it is still a peg's by its id, because ids are never reused and
+  // release zeroes them; the list compacts as it judges. Passes repeat until nothing moves,
+  // because one peg joining the best can be the next one's reference; the cap is a hard bound
+  // the suites hold.
+  void settlePegs() {
+    if (pegs_.empty() || state_ != CONTINUOUS) {
+      return;
+    }
+    bool moved = true;
+    for (int pass = 0; moved && pass < 16; pass++) {
+      moved = false;
+      std::size_t keep = 0;
+      for (std::size_t at = 0; at < pegs_.size(); at++) {
+        if (slab_.hot(pegs_[at].slot).id == pegs_[at].orderId) {
+          pegs_[keep++] = pegs_[at];
+        }
+      }
+      pegs_.resize(keep);
+      for (const Peg& peg : pegs_) {
+        Slab::Hot& hot = slab_.hot(peg.slot);
+        const Slab::Cold& cold = slab_.cold(peg.slot);
+        const bool resting = hot.tick >= 0;
+        const std::int32_t ownRank = resting ? book_.rankOf(cold.side, hot.tick) : -1;
+        std::int64_t target =
+            book_.bestPriceExcluding(cold.side, ownRank, resting ? hot.displayed : 0);
+        if (target != 0 && cold.pegCap != 0) {
+          target = cold.side == 0 ? std::min(target, cold.pegCap) : std::max(target, cold.pegCap);
+        }
+        const std::int64_t current = resting ? book_.priceOfTick(hot.tick) : 0;
+        if (target == current) {
+          continue;
+        }
+        if (resting) {
+          book_.remove(cold.side, peg.slot);
+          feed_.removed(hot.id, hot.displayed, sbe::RemoveReason::REPLACED);
+        }
+        if (target == 0) {
+          hot.tick = -1;
+        } else {
+          hot.tick = book_.tickOfPrice(target);
+          book_.add(cold.side, peg.slot);
+          feed_.rested(hot.id, target, hot.displayed, cold.side);
+        }
+        moved = true;
+      }
+    }
+    reportIndicative();
+  }
+
+  void expirePegs() {
+    for (const Peg& peg : pegs_) {
+      Slab::Hot& hot = slab_.hot(peg.slot);
+      if (hot.id != peg.orderId) {
+        continue;
+      }
+      if (hot.tick >= 0) {
+        book_.remove(slab_.cold(peg.slot).side, peg.slot);
+        feed_.removed(hot.id, hot.displayed, sbe::RemoveReason::EXPIRED);
+      } else {
+        feed_.removed(hot.id, hot.remaining, sbe::RemoveReason::EXPIRED);
+      }
+      slab_.release(peg.slot);
+    }
+    pegs_.clear();
+  }
+
   // Views for the tests, allocating freely because tests own their time -------------------------
 
   // The engine's state beyond its structures: prices the session has moved, the trading state,
@@ -286,6 +404,11 @@ class Engine {
     sink.i64(indicativeQuantity_);
     book_.save(sink);
     triggers_.save(sink);
+    sink.u32(static_cast<std::uint32_t>(pegs_.size()));
+    for (const Peg& peg : pegs_) {
+      sink.i32(peg.slot);
+      sink.u64(peg.orderId);
+    }
   }
 
   void restore(common::ByteSource& source) {
@@ -296,6 +419,13 @@ class Engine {
     indicativeQuantity_ = source.i64();
     book_.restore(source);
     triggers_.restore(source);
+    pegs_.clear();
+    const std::uint32_t pegCount = source.u32();
+    for (std::uint32_t at = 0; at < pegCount; at++) {
+      const std::int32_t slot = source.i32();
+      const std::uint64_t orderId = source.u64();
+      pegs_.push_back({slot, orderId});
+    }
   }
 
   const Book& book() const { return book_; }
@@ -330,10 +460,12 @@ class Engine {
     std::uint8_t timeInForce;
     bool postOnly;
     bool auctionOnly;
+    std::int64_t pegCap;
   };
 
   static constexpr std::int32_t LIMIT = sbe::Pricing::LIMIT;
   static constexpr std::int32_t MARKET = sbe::Pricing::MARKET;
+  static constexpr std::int32_t PEGGED = sbe::Pricing::PEGGED;
   static constexpr std::int32_t DAY = sbe::TimeInForce::DAY;
   static constexpr std::int32_t IOC = sbe::TimeInForce::IMMEDIATE_OR_CANCEL;
   static constexpr std::int32_t FOK = sbe::TimeInForce::FILL_OR_KILL;
@@ -493,6 +625,7 @@ class Engine {
     cold.timeInForce = taker.timeInForce;
     cold.postOnly = taker.postOnly ? 1 : 0;
     cold.auctionOnly = taker.auctionOnly ? 1 : 0;
+    cold.pegCap = taker.pegCap;
     return slot;
   }
 
@@ -525,6 +658,7 @@ class Engine {
       taker.timeInForce = cold.timeInForce;
       taker.postOnly = cold.postOnly != 0;
       taker.auctionOnly = cold.auctionOnly != 0;
+      taker.pegCap = cold.pegCap;
       taker.limitRank = limitRankOf(taker);
       slab_.release(fired);
       if (state_ == CONTINUOUS) {
@@ -762,6 +896,25 @@ class Engine {
         return refusal(sbe::RejectReason::INVALID_FIELDS);
       }
     }
+    if (taker.pricing == PEGGED) {
+      // A peg lives only in continuous trading, never takes, never waits on a trigger, and
+      // never demands immediacy or a minimum, because it exists to follow the best.
+      if (state_ != CONTINUOUS) {
+        return refusal(sbe::RejectReason::STATE_NOT_PERMITTED);
+      }
+      if (triggerPrice != 0 || taker.minQuantity > 0) {
+        return refusal(sbe::RejectReason::INVALID_FIELDS);
+      }
+      if (price != 0) {
+        // The cap is a limit and holds itself to the ladder like one; the band judges the
+        // placement price, which is always an existing displayed price.
+        const std::int64_t capTick = tickOrRefusal(price);
+        if (capTick < 0) {
+          return capTick;
+        }
+      }
+      return 0;
+    }
     std::int64_t tick = 0;
     if (taker.pricing == LIMIT) {
       tick = tickOrRefusal(price);
@@ -802,6 +955,10 @@ class Engine {
   // Combinations that contradict themselves: a market order told to rest, and a post-only order
   // told never to rest, are each an instruction that cannot be followed.
   static bool inconsistent(const Taker& taker) {
+    if (taker.pricing == PEGGED &&
+        (taker.postOnly || taker.auctionOnly || taker.timeInForce >= IOC)) {
+      return true;
+    }
     if (taker.auctionOnly && (taker.pricing == MARKET || taker.timeInForce >= IOC)) {
       // An auction-only order rests until its call, so it cannot be a market order or an
       // immediacy demand; market-on-open would need a resting market order, which this book
@@ -899,6 +1056,12 @@ class Engine {
   std::int64_t reference_;
   std::int64_t lastExecuted_ = 0;
   bool proRata_;
+  struct Peg {
+    std::int32_t slot = 0;
+    std::uint64_t orderId = 0;
+  };
+
+  std::vector<Peg> pegs_;
   std::int32_t state_ = PRE_OPEN;
 
   std::int64_t indicativePrice_ = 0;
