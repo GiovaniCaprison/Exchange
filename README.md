@@ -78,6 +78,12 @@ pure function of the stream so a replayed day raises the same alerts at the same
 cases landing in a replayable alert journal. Its design and its proofs live in
 `components/oversight/`.
 
+Post-trade is the day handed over: a ledger consuming the same stream as everyone, resolving
+every print to its buyer and its seller, keeping the trade tape and the position accounts under
+conservation as law, positions summing to zero per instrument and cash to zero across the venue,
+and writing the two files a clearing house would settle against at the close, byte-identical on
+a replay. Its design and its proofs live in `components/posttrade/`.
+
 ## Build
 
 Requires CMake and a C++23 compiler.
