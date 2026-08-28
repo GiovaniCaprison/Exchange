@@ -94,7 +94,7 @@ aggressed.
 | Enum | Values |
 |---|---|
 | Side | BUY 0, SELL 1 |
-| Pricing | LIMIT 0, MARKET 1 |
+| Pricing | LIMIT 0, MARKET 1, PEGGED 2 |
 | TimeInForce | GOOD_TILL_CANCEL 0, DAY 1, IMMEDIATE_OR_CANCEL 2, FILL_OR_KILL 3 |
 | OrderFlags | bit 0 postOnly, bit 1 auctionOnly |
 | Allocation | PRICE_TIME 0, PRO_RATA 1 |
@@ -116,7 +116,13 @@ refused without executing. An auction-only order is limit-on-open or limit-on-cl
 be entered outside continuous trading, rests until its call, participates in the uncrossing, and
 whatever the call did not fill expires with the reason EXPIRED the moment continuous trading
 begins, or at the close; it cannot be a market order, an immediacy demand or a stop, because it
-exists to rest until its call.
+exists to rest until its call. A pegged order is a primary peg: it rests at the best displayed
+price on its own side and follows it, its reference excluding its own quote so it tracks the
+market down instead of ratcheting on itself, with the order's price field as an optional limit
+cap it never crosses. Every move is a removal reasoned REPLACED and a fresh rest under the same
+id, so queue priority is honestly lost. A peg with no reference parks off the book and rests
+again when one appears; a peg lives only in continuous trading, is refused immediacy, triggers,
+post-only, minimums and replaces, and expires whenever continuous trading ends.
 
 An order with displayQuantity below quantity is an iceberg: only the displayed tranche rests
 visibly, displayed quantity at a price is consumed before hidden, and when a tranche is exhausted

@@ -131,7 +131,13 @@ sbe::Side::Value sideOf(const std::string& word) {
 }
 
 sbe::Pricing::Value pricingOf(const std::string& word) {
-  return word == "MARKET" ? sbe::Pricing::MARKET : sbe::Pricing::LIMIT;
+  if (word == "MARKET") {
+    return sbe::Pricing::MARKET;
+  }
+  if (word == "PEGGED") {
+    return sbe::Pricing::PEGGED;
+  }
+  return sbe::Pricing::LIMIT;
 }
 
 sbe::TimeInForce::Value timeInForceOf(const std::string& word) {

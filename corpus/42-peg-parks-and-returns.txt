@@ -1,0 +1,16 @@
+# A peg with no reference waits off the book, parked like a stop but for a different reason,
+# and rests again the moment anyone displays on its side; a parked peg can still be cancelled.
+INSTRUMENT tick=5 lot=1 min=1 max=1000000 band=500 open=100000 alloc=PRICE_TIME
+SESSION CONTINUOUS
+STATE CONTINUOUS
+NEW BUY PEGGED GTC 0 10 #1
+ACCEPTED #1 order=1
+NEW BUY LIMIT GTC 99985 5 #2
+ACCEPTED #2 order=2
+RESTED order=2 BUY 99985 5
+RESTED order=1 BUY 99985 10
+CANCEL #2
+REMOVED order=2 5 CANCELLED
+REMOVED order=1 10 REPLACED
+CANCEL #1
+REMOVED order=1 10 CANCELLED

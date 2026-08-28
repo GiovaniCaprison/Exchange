@@ -45,6 +45,9 @@
     <enum name="Pricing" encodingType="uint8">
       <validValue name="LIMIT">0</validValue>
       <validValue name="MARKET">1</validValue>
+      <!-- A primary peg: rests at the best displayed price on its own side, follows it, and
+           takes the order's price field as an optional limit cap, zero for uncapped. -->
+      <validValue name="PEGGED">2</validValue>
     </enum>
     <enum name="TimeInForce" encodingType="uint8">
       <validValue name="GOOD_TILL_CANCEL">0</validValue>

@@ -44,6 +44,7 @@ class Slab {
     std::int64_t minQuantity;
     std::int64_t triggerPrice;
     std::int64_t displaySize;
+    std::int64_t pegCap;
     std::uint32_t participantId;
     std::uint8_t side;
     std::uint8_t pricing;
@@ -80,6 +81,9 @@ class Slab {
 
   // The slot must already be out of every chain (P-8); only the link words are rewritten.
   void release(const std::int32_t slot) {
+    // The identity dies with the slot, so anything holding a stale slot number can prove it
+    // stale: ids are never reused, and a freed slot answers zero.
+    hot(slot).id = 0;
     hot(slot).previous = 0;
     hot(slot).next = static_cast<std::uint32_t>(freeHead_);
     freeHead_ = slot;
