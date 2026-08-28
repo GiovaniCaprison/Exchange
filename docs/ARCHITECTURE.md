@@ -79,12 +79,16 @@ bytes.
 
 ## Availability
 
-High availability is a property of the architecture rather than a feature. A warm secondary
-matcher consumes the same sequence as the primary and takes over by continuing from where its own
-consumption stands; nothing is transferred at failover because nothing needs to be. That is sound
-exactly when every component is deterministic: the same sequenced input produces byte identical
-output, which this repository holds as a tested requirement on every component rather than an
-assumption (Schneider 1990).
+High availability is a property of the architecture rather than a feature. A warm twin matcher
+consumes the same sequenced commands as the primary, over the packet feed with the rewinder as
+its repair, and publishes its own event ring and journal, byte identical to the primary's
+because the engine is a pure function of the stream. Consumers seat at both rings and
+deduplicate by the event sequence every event carries, so the twin rings are the event stream's
+A and B, and the primary dying mid-day is a non-event nobody downstream notices: nothing is
+transferred at failover because nothing needs to be, and the failover drill kills the primary
+for real on every merge. That is sound exactly when every component is deterministic: the same
+sequenced input produces byte identical output, which this repository holds as a tested
+requirement on every component rather than an assumption (Schneider 1990).
 
 The sequencer is the one process that cannot borrow its availability this way, because it creates
 the sequence rather than consuming it, so its survival is built from three mechanisms. A command

@@ -129,7 +129,11 @@ retransmission and snapshots; the bots trade. To shard, run one matcher per inst
 `--instruments 1,3 --shard 1` and `--instruments 2,4 --shard 2` on the same sequenced stream,
 each broadcasting its own event ring; every consumer's `--events` and `--in` take a comma list
 of rings, and the shard number rides the top byte of every id it mints, so merged streams never
-collide. The whole arrangement is also a merge gate: the
+collide. For availability, run a warm twin beside each matcher: give the sequencer `--udp` and
+start a rewinder (`sequencer --rewinder --journal seq.exj --rewind-port 36402`), then
+`matcher --follow-udp PORT --repair-udp HOST:36402 --out b.ring --journal mb.exj`; consumers
+join twin rings with a pipe, `--events a.ring|b.ring`, and deduplicate by event sequence, so
+killing the primary matcher mid-day is a non-event. The whole arrangement is also a merge gate: the
 ecosystem suite runs exactly this venue as processes and holds it to its word by the crowd's own
 exit code.
 

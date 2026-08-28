@@ -25,6 +25,7 @@
 #include "clock.hpp"
 #include "scheduler.hpp"
 #include "spsc_ring.hpp"
+#include "stream.hpp"
 
 namespace {
 
@@ -126,10 +127,16 @@ int main(const int count, char** values) {
 
   common::SpscRing submissions = common::SpscRing::create(submissionsPath, 1 << 20);
   common::SpscRing acks = attachPatiently(acksPath);
-  // One seat per shard: the event stream may arrive as several broadcast rings.
-  std::vector<common::BroadcastReader> events;
-  for (const std::string& one : split(eventsPath, ',')) {
-    events.push_back(joinPatiently(one));
+  // One seat per shard, each seat holding every twin of that shard's event stream: shards are
+  // separated by commas, twins within a shard by a pipe, and the seat deduplicates by the event
+  // sequence, so a twin matcher dying is a non-event.
+  std::vector<common::stream::SequencedSeat> events;
+  for (const std::string& group : split(eventsPath, ',')) {
+    common::stream::SequencedSeat seat;
+    for (const std::string& twin : split(group, '|')) {
+      seat.join(joinPatiently(twin));
+    }
+    events.push_back(std::move(seat));
   }
   exchange::sequencer::WallClock wall;
 
@@ -205,7 +212,7 @@ int main(const int count, char** values) {
       }
     }
     acks.poll([&](char* message, const std::size_t length) { scheduler.onAck(message, length); });
-    for (common::BroadcastReader& shard : events) {
+    for (common::stream::SequencedSeat& shard : events) {
       shard.poll(
           [&](char* message, const std::size_t length) { scheduler.onEvent(message, length); });
     }

@@ -18,6 +18,7 @@
 
 #include "broadcast_ring.hpp"
 #include "ledger.hpp"
+#include "stream.hpp"
 
 namespace {
 
@@ -60,13 +61,28 @@ int main(const int count, char** values) {
     return 2;
   }
 
-  std::vector<common::BroadcastReader> events;
+  // One seat per shard, each seat holding every twin of that shard's event stream: shards are
+  // separated by commas, twins within a shard by a pipe, and the seat deduplicates by the event
+  // sequence, so a twin matcher dying is a non-event.
+  std::vector<common::stream::SequencedSeat> events;
   {
     std::size_t at = 0;
     while (at < eventsPath.size()) {
       const std::size_t comma = eventsPath.find(',', at);
-      events.push_back(joinPatiently(
-          eventsPath.substr(at, comma == std::string::npos ? std::string::npos : comma - at)));
+      const std::string group =
+          eventsPath.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+      common::stream::SequencedSeat seat;
+      std::size_t twin = 0;
+      while (twin < group.size()) {
+        const std::size_t pipe = group.find('|', twin);
+        seat.join(joinPatiently(
+            group.substr(twin, pipe == std::string::npos ? std::string::npos : pipe - twin)));
+        if (pipe == std::string::npos) {
+          break;
+        }
+        twin = pipe + 1;
+      }
+      events.push_back(std::move(seat));
       if (comma == std::string::npos) {
         break;
       }
@@ -79,7 +95,7 @@ int main(const int count, char** values) {
   std::signal(SIGTERM, onSignal);
   while (stopped == 0 && !ledger.dayIsDone()) {
     std::size_t consumed = 0;
-    for (common::BroadcastReader& shard : events) {
+    for (common::stream::SequencedSeat& shard : events) {
       consumed += shard.poll(
           [&](char* message, const std::size_t length) { ledger.onEvent(message, length); });
     }

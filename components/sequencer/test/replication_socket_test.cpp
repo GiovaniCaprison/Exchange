@@ -49,15 +49,20 @@ TEST_CASE("the safe policy crosses a real wire and the journals agree") {
   // The test plays the gateway: it creates the submission ring both processes will meet at.
   common::SpscRing gateway = common::SpscRing::create(in + "gw.ring", 1 << 22);
 
+  struct Reaper {
+    std::string pids;
+    ~Reaper() { std::system(("kill $(cat " + pids + ") 2>/dev/null; sleep 1").c_str()); }
+  } reaper{pids.string()};
   const std::string binary = SEQUENCER_BINARY;
-  REQUIRE(std::system((binary + " --standby-udp 36301 --repair-udp 127.0.0.1:36302 --journal " +
-                       in + "standby.exj & echo $! >> " + pids.string())
-                          .c_str()) == 0);
+  REQUIRE(
+      std::system((binary + " --standby-udp 36301 --repair-udp 127.0.0.1:36302 --journal " + in +
+                   "standby.exj > " + in + "standby.log 2>&1 & echo $! >> " + pids.string())
+                      .c_str()) == 0);
   REQUIRE(std::system((binary + " --in " + in + "gw.ring --acks " + in + "ack.ring --out " + in +
                        "seq.ring --journal " + in +
                        "primary.exj --policy safe --replicate-udp 127.0.0.1:36301"
-                       " --repair-port 36302 & echo $! >> " +
-                       pids.string())
+                       " --repair-port 36302 > " +
+                       in + "primary.log 2>&1 & echo $! >> " + pids.string())
                           .c_str()) == 0);
 
   for (std::vector<char>& record : records) {
@@ -96,11 +101,8 @@ TEST_CASE("the safe policy crosses a real wire and the journals agree") {
     }
     ::usleep(100'000);
   }
-  std::system(("kill $(cat " + pids.string() + ") 2>/dev/null; sleep 1").c_str());
-
   const std::vector<char> primary = bytesOf(room / "primary.exj");
   const std::vector<char> standby = bytesOf(room / "standby.exj");
   CHECK(!primary.empty());
   CHECK(primary == standby);
-  std::filesystem::remove_all(room);
 }
