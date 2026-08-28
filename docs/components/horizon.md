@@ -5,11 +5,12 @@ turn comes. Nothing on this list blocks anything above it.
 
 ## Off-box transport
 
-The sequenced stream between machines: Aeron (Real Logic) as the built reference, kernel bypass
-(OpenOnload, DPDK) for the network path, and time itself as an engineering problem once two
-machines are involved, which is IEEE 1588 precision time protocol territory. This is also where
-the measurement story grows up: one-way latency between machines cannot be measured without
-synchronized clocks, and learning why is half the value.
+The replication link already crosses machines: ranges over UDP, the repair conversation riding
+back on one port, loss reshipped and reorder relinked, with the two-box runbook in PRACTICE.md.
+What remains: the witness's own UDP carrier, so automated failover crosses boxes too; Aeron
+(Real Logic) as the built reference for the general stream between machines; kernel bypass
+(OpenOnload, DPDK) for the network path; and PTP discipline as a measured fact rather than a
+setup step.
 
 ## Other engines
 

@@ -47,6 +47,14 @@ add_executable(driver test/driver_main.cpp)
 target_link_libraries(driver PRIVATE exchange-sequencer matcher-test-harness)
 exchange_measured(driver)
 
+add_executable(sequencer-replication-socket test/replication_socket_test.cpp)
+target_link_libraries(sequencer-replication-socket
+  PRIVATE exchange-sequencer matcher-test-harness Catch2::Catch2WithMain)
+target_include_directories(sequencer-replication-socket PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test)
+target_compile_definitions(sequencer-replication-socket
+  PRIVATE SEQUENCER_BINARY="$<TARGET_FILE:sequencer>")
+add_dependencies(sequencer-replication-socket sequencer)
+
 add_executable(sequencer-determinism test/determinism_test.cpp)
 target_link_libraries(sequencer-determinism PRIVATE Catch2::Catch2WithMain)
 target_compile_definitions(sequencer-determinism PRIVATE
@@ -75,5 +83,6 @@ catch_discover_tests(sequencer-packets)
 catch_discover_tests(sequencer-replication)
 catch_discover_tests(sequencer-chaos)
 catch_discover_tests(sequencer-sources)
+catch_discover_tests(sequencer-replication-socket)
 catch_discover_tests(sequencer-determinism)
 catch_discover_tests(sequencer-allocation)

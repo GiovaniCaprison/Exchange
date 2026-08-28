@@ -151,6 +151,28 @@ the driver's two-hop ring-to-ring number, is the price of the socket edges; the 
 minus the per-component machine costs is the price of the carriers, and every term has its own
 harness in the matrix above.
 
+## The second box
+
+Replication earns its name when the standby is a machine away. Provision a second m5zn.metal in
+the same placement group, run `scripts/box_setup.sh` on both, and time both with PTP, because
+one-way latency between machines is meaningless on unsynchronized clocks and learning why is
+half the value: `sudo apt install linuxptp`, then on each box `sudo ptp4l -i INTERFACE -m` with
+one grandmaster and `sudo phc2sys -s INTERFACE -w -m` to steer the system clock; `pmc -u -b 0
+'GET CURRENT_DATA_SET'` shows the offset, and the campaign records it in the manifest the way it
+records isolation.
+
+The invocation is the socket suite's, with a real address in place of loopback. On the standby
+box: `sequencer --standby-udp 36301 --repair-udp PRIMARY_HOST:36302 --journal standby.exj`. On
+the primary box, the live line gains `--policy safe --replicate-udp STANDBY_HOST:36301
+--repair-port 36302`. Ranges cross one way, acknowledgments and rewind requests ride back on the
+repair port, loss is repaired by the reship and reordered arrivals by the relink, and at the
+close the journals must be byte-identical across the two machines, which is the same diff the
+suite runs on loopback every merge. The two-hop driver run against a cross-box safe policy, next
+to the same run against the on-box one, is the measured price of the wire.
+
+The witness still leases over rings, so automated failover remains an on-box arrangement; the
+witness's own UDP carrier is the named next step on the horizon page.
+
 The campaign feeds back into the repository: baselines become budgets, budgets become gates,
 and the codegen ritual's blessed-escape list hardens into a check, so the next change that
 spends what the campaign banked fails a build instead of a retrospective.
