@@ -96,7 +96,7 @@ aggressed.
 | Side | BUY 0, SELL 1 |
 | Pricing | LIMIT 0, MARKET 1 |
 | TimeInForce | GOOD_TILL_CANCEL 0, DAY 1, IMMEDIATE_OR_CANCEL 2, FILL_OR_KILL 3 |
-| OrderFlags | bit 0 postOnly |
+| OrderFlags | bit 0 postOnly, bit 1 auctionOnly |
 | Allocation | PRICE_TIME 0, PRO_RATA 1 |
 | SessionState | PRE_OPEN 0, OPENING_AUCTION 1, CONTINUOUS 2, CLOSING_AUCTION 3, HALTED 4, CLOSED 5 |
 | RejectReason | NON_POSITIVE_QUANTITY 0, LOT_VIOLATION 1, NON_POSITIVE_PRICE 2, TICK_VIOLATION 3, STATIC_BAND_VIOLATION 4, DYNAMIC_BAND_VIOLATION 5, INVALID_FIELDS 6, MINIMUM_QUANTITY_ABOVE_ORDER 7, DISPLAY_QUANTITY_ABOVE_ORDER 8, MINIMUM_QUANTITY_NOT_MET 9, WOULD_CROSS 10, FILL_OR_KILL_UNFILLABLE 11, STATE_NOT_PERMITTED 12, UNKNOWN_ORDER 13, QUANTITY_BELOW_EXECUTED 14 |
@@ -112,7 +112,11 @@ arrival order, while GOOD_TILL_CANCEL stands for tomorrow through the snapshot; 
 IMMEDIATE_OR_CANCEL remainder is removed; a FILL_OR_KILL order executes in full on entry
 or is refused whole; a market order never rests. A post-only order never takes liquidity and is
 refused if it would. An order carrying minQuantity executes at least that much on entry or is
-refused without executing.
+refused without executing. An auction-only order is limit-on-open or limit-on-close: it may only
+be entered outside continuous trading, rests until its call, participates in the uncrossing, and
+whatever the call did not fill expires with the reason EXPIRED the moment continuous trading
+begins, or at the close; it cannot be a market order, an immediacy demand or a stop, because it
+exists to rest until its call.
 
 An order with displayQuantity below quantity is an iceberg: only the displayed tranche rests
 visibly, displayed quantity at a price is consumed before hidden, and when a tranche is exhausted

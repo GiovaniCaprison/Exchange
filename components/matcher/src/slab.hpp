@@ -49,6 +49,7 @@ class Slab {
     std::uint8_t pricing;
     std::uint8_t timeInForce;
     std::uint8_t postOnly;
+    std::uint8_t auctionOnly;
   };
 
   explicit Slab(const std::int32_t preallocated) : capacity_(preallocated) {

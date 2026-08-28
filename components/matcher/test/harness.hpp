@@ -100,7 +100,8 @@ class CommandWriter {
                   const sbe::Pricing::Value pricing, const sbe::TimeInForce::Value timeInForce,
                   const bool postOnly, const std::int64_t price, const std::int64_t quantity,
                   const std::int64_t minQuantity, const std::int64_t displayQuantity,
-                  const std::int64_t triggerPrice, const std::uint64_t smpId) {
+                  const std::int64_t triggerPrice, const std::uint64_t smpId,
+                  const bool auctionOnly = false) {
     Framed framed = start<sbe::NewOrder>(instrumentId);
     sbe::NewOrder encoder;
     wrap(encoder, framed, instrumentId);
@@ -113,7 +114,7 @@ class CommandWriter {
         .smpId(smpId)
         .participantId(participantId);
     encoder.side(side).pricing(pricing).timeInForce(timeInForce);
-    encoder.flags().clear().postOnly(postOnly);
+    encoder.flags().clear().postOnly(postOnly).auctionOnly(auctionOnly);
     return framed;
   }
 

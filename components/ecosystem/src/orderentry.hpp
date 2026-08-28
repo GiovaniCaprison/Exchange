@@ -129,7 +129,8 @@ class OrderEntry {
                          const sbe::TimeInForce::Value timeInForce, const std::int64_t price,
                          const std::int64_t quantity, const std::int64_t minQuantity = 0,
                          const std::int64_t displayQuantity = 0,
-                         const std::int64_t triggerPrice = 0, const std::uint64_t smpId = 0) {
+                         const std::int64_t triggerPrice = 0, const std::uint64_t smpId = 0,
+                         const bool auctionOnly = false) {
     const std::uint64_t clientOrderId = nextClientOrderId_++;
     Order& order = orderSlot(clientOrderId);
     order.clientOrderId = clientOrderId;
@@ -150,6 +151,7 @@ class OrderEntry {
           .smpId(smpId)
           .participantId(participantId_);
       out.side(side).pricing(pricing).timeInForce(timeInForce);
+      out.flags().clear().auctionOnly(auctionOnly);
     });
     return clientOrderId;
   }

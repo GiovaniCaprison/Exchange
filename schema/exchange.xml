@@ -54,6 +54,8 @@
     </enum>
     <set name="OrderFlags" encodingType="uint8">
       <choice name="postOnly">0</choice>
+      <!-- Lives only in the calls: limit-on-open and limit-on-close, expired when the call ends. -->
+      <choice name="auctionOnly">1</choice>
     </set>
     <enum name="RiskRefusal" encodingType="uint8">
       <validValue name="RATE_LIMIT">0</validValue>
