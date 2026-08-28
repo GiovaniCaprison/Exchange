@@ -291,6 +291,13 @@ journal write alone. Under the safe policy the invariant that failover rests on 
 construction: published is a subset of replicated, so the standby holds everything any consumer
 has ever seen.
 
+On the wire between machines the link is UDP, one range per datagram. Loss and reorder are the
+repair conversation's business: the standby's relink parks what arrives early and asks for what
+is missing with a RewindRequest on the repair port, the primary answers any request, and a
+stalled pipeline reships its whole unacknowledged suffix on its own clock, which the standby's
+skip-what-is-covered rule makes idempotent. The standby itself never sees a gap, so its contract
+is unchanged by the wire.
+
 ## Leadership
 
 At most one sequencer extends the log, and epochs are how that is enforced. Every range carries

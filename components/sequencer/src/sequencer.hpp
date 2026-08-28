@@ -165,6 +165,23 @@ class Sequencer {
     }
   }
 
+  // Everything replicated and unacknowledged ships again, oldest first, each rebuilt from the
+  // pipeline byte for byte. On the lossless on-box link this never runs; on a lossy wire it is
+  // the whole repair story, because the standby refuses gaps and skips overlaps, so a reship of
+  // the suffix fills the hole and costs nothing where there was none.
+  void reshipUnacked() {
+    char record[sizeof packet_];
+    for (std::uint64_t at = 0; at < pendingCount_; at++) {
+      const Pending& entry = pending_[(pendingHead_ + at) & (PIPELINE - 1)];
+      sbe::GatewaySubmission envelope;
+      envelope.wrapAndApplyHeader(record, 0, sizeof record);
+      envelope.gatewaySequence(entry.gatewaySequence).gatewayId(entry.gatewayId).reserved(0);
+      std::memcpy(record + SUBMISSION_BYTES, arena_.data() + entry.offset, entry.length);
+      ship(entry.sequence, record, SUBMISSION_BYTES + entry.length);
+    }
+    shipMarker(published_ + 1, false);
+  }
+
   // The pending range leaves as one packet; on the wire a range is a batch or nothing.
   void flush() {
     if (!builder_.isOpen()) {

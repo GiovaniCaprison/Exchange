@@ -10,6 +10,8 @@
 
 #include <cstdint>
 #include <cstring>
+#include <utility>
+#include <vector>
 
 #include "exchange_protocol/GatewaySubmission.h"
 #include "exchange_protocol/MessageHeader.h"
@@ -141,6 +143,56 @@ class Standby {
   std::uint64_t violations_ = 0;
   bool ended_ = false;
   std::vector<GatewayState> gateways_;
+};
+
+// The lossy-wire adapter: datagrams in any order in, the standby's lossless contract out. What
+// arrives early parks; what is missing is asked for, once per gap, through whatever channel the
+// deployment gives; and the standby behind it only ever hears ranges in order, so its refusal
+// posture stays the invariant it was written as. Parking buys its simplicity with a copy, which
+// is the repair path pricing itself, the same trade the consumer library's packet source makes.
+template <typename Held, typename Ask>
+class Relink {
+ public:
+  Relink(Held& standby, Ask& ask) : standby_(standby), ask_(ask) {}
+
+  void onPacket(char* bytes, const std::size_t length) {
+    common::ranges::Reader reader(bytes, length);
+    if (reader.firstSequence() > standby_.held() + 1 && !reader.heartbeat() &&
+        !reader.endOfSession()) {
+      if (standby_.held() + 1 != askedFrom_ || reader.firstSequence() != askedTo_) {
+        ask_.request(standby_.held() + 1,
+                     static_cast<std::uint32_t>(reader.firstSequence() - standby_.held() - 1));
+        askedFrom_ = standby_.held() + 1;
+        askedTo_ = reader.firstSequence();
+      }
+      parked_.emplace_back(bytes, bytes + length);
+      return;
+    }
+    standby_.onRange(bytes, length);
+    bool progressed = true;
+    while (progressed) {
+      progressed = false;
+      for (std::size_t at = 0; at < parked_.size(); at++) {
+        common::ranges::Reader waiting(parked_[at].data(), parked_[at].size());
+        if (waiting.firstSequence() <= standby_.held() + 1) {
+          std::vector<char> range = std::move(parked_[at]);
+          parked_.erase(parked_.begin() + static_cast<long>(at));
+          standby_.onRange(range.data(), range.size());
+          progressed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  std::size_t parked() const { return parked_.size(); }
+
+ private:
+  Held& standby_;
+  Ask& ask_;
+  std::vector<std::vector<char>> parked_;
+  std::uint64_t askedFrom_ = 0;
+  std::uint64_t askedTo_ = 0;
 };
 
 }  // namespace exchange::sequencer

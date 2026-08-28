@@ -20,6 +20,7 @@
 // session.
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -37,6 +38,7 @@
 #include "exchange_protocol/LeaseRequest.h"
 #include "exchange_protocol/LeaseResponse.h"
 #include "exchange_protocol/MessageHeader.h"
+#include "exchange_protocol/RewindRequest.h"
 #include "journal.hpp"
 #include "leadership.hpp"
 #include "loopback.hpp"
@@ -196,6 +198,96 @@ std::uint32_t gatewayOf(char* record, const std::size_t length) {
   return submission.gatewayId();
 }
 
+// The replication link over UDP: the same claim-in-place surface the rings give, one datagram
+// per publish. Loss is the reship's business, ordering is the relink's, so this class carries
+// bytes and nothing else.
+class UdpLink {
+ public:
+  UdpLink(const std::string& host, const std::uint16_t port) {
+    socket_ = ::socket(AF_INET, SOCK_DGRAM, 0);
+    to_.sin_family = AF_INET;
+    to_.sin_port = htons(port);
+    ::inet_pton(AF_INET, host.c_str(), &to_.sin_addr);
+  }
+  ~UdpLink() {
+    if (socket_ >= 0) {
+      ::close(socket_);
+    }
+  }
+  std::size_t claim(const std::size_t length) {
+    length_ = length;
+    return 0;
+  }
+  char* buffer() { return space_; }
+  void commit() {}
+  void publish() {
+    if (socket_ >= 0) {
+      ::sendto(socket_, space_, length_, 0, reinterpret_cast<const sockaddr*>(&to_), sizeof to_);
+    }
+  }
+
+ private:
+  int socket_ = -1;
+  sockaddr_in to_{};
+  char space_[2048] = {};
+  std::size_t length_ = 0;
+};
+
+// The standby's voice: acknowledgments and rewind requests to the primary's repair port, on one
+// socket, because both are the same conversation.
+struct UdpVoice {
+  int socket_ = -1;
+  sockaddr_in to_{};
+  char space_[512] = {};
+  std::size_t length_ = 0;
+
+  UdpVoice(const std::string& host, const std::uint16_t port) {
+    socket_ = ::socket(AF_INET, SOCK_DGRAM, 0);
+    ::fcntl(socket_, F_SETFL, ::fcntl(socket_, F_GETFL, 0) | O_NONBLOCK);
+    to_.sin_family = AF_INET;
+    to_.sin_port = htons(port);
+    ::inet_pton(AF_INET, host.c_str(), &to_.sin_addr);
+  }
+  ~UdpVoice() {
+    if (socket_ >= 0) {
+      ::close(socket_);
+    }
+  }
+  std::size_t claim(const std::size_t length) {
+    length_ = length;
+    return 0;
+  }
+  char* buffer() { return space_; }
+  void commit() {}
+  void publish() {
+    ::sendto(socket_, space_, length_, 0, reinterpret_cast<const sockaddr*>(&to_), sizeof to_);
+  }
+  void request(const std::uint64_t firstSequence, const std::uint32_t count) {
+    char ask[64] = {};
+    sbe::RewindRequest encoder;
+    encoder.wrapAndApplyHeader(ask, 0, sizeof ask);
+    encoder.firstSequence(firstSequence).count(count).reserved(0);
+    ::sendto(socket_, ask,
+             sbe::MessageHeader::encodedLength() + sbe::RewindRequest::sbeBlockLength(), 0,
+             reinterpret_cast<const sockaddr*>(&to_), sizeof to_);
+  }
+};
+
+int boundUdp(const std::uint16_t port) {
+  const int handle = ::socket(AF_INET, SOCK_DGRAM, 0);
+  const int reuse = 1;
+  ::setsockopt(handle, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof reuse);
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_ANY);
+  address.sin_port = htons(port);
+  if (::bind(handle, reinterpret_cast<const sockaddr*>(&address), sizeof address) != 0) {
+    return -1;
+  }
+  ::fcntl(handle, F_SETFL, ::fcntl(handle, F_GETFL, 0) | O_NONBLOCK);
+  return handle;
+}
+
 std::uint64_t replicationAckOf(const char* message) {
   std::uint64_t upToSequence = 0;
   std::memcpy(&upToSequence, message + sbe::MessageHeader::encodedLength(), sizeof upToSequence);
@@ -265,7 +357,8 @@ int offline(const std::string& submissionsPath, const std::string& journalPath,
 template <typename Link>
 int liveLoop(std::vector<common::SpscRing>& ins, std::vector<common::SpscRing>& acks,
              common::SpscRing& out, common::journal::Writer& journal, UdpSink& packets, Link& link,
-             const sequencing::Durability policy, common::SpscRing* replicationAcks) {
+             const sequencing::Durability policy, common::SpscRing* replicationAcks,
+             const int repairSocket = -1) {
   sequencing::WallClock clock;
   sequencing::Sequencer<common::SpscRing, common::SpscRing, UdpSink, common::journal::Writer,
                         sequencing::WallClock, Link>
@@ -274,6 +367,7 @@ int liveLoop(std::vector<common::SpscRing>& ins, std::vector<common::SpscRing>& 
   std::signal(SIGINT, onSignal);
   std::signal(SIGTERM, onSignal);
   std::uint64_t lastSend = clock.now();
+  std::uint64_t lastRepair = clock.now();
   std::uint64_t lastPublished = 0;
   while (stopped == 0) {
     std::size_t sequenced = 0;
@@ -285,6 +379,29 @@ int liveLoop(std::vector<common::SpscRing>& ins, std::vector<common::SpscRing>& 
       replicationAcks->poll([&](char* message, const std::size_t) {
         sequencer.onReplicationAck(replicationAckOf(message));
       });
+    }
+    if (repairSocket >= 0) {
+      // The wire's repair conversation: acknowledgments drain the pipeline, and a rewind
+      // request is the standby saying something never arrived, answered by the whole
+      // unacknowledged suffix, coarse and correct; a stalled pipeline reships on its own
+      // clock too, because the request itself can be lost.
+      char heard[512];
+      long got = 0;
+      while ((got = ::recv(repairSocket, heard, sizeof heard, 0)) > 0) {
+        sbe::MessageHeader wrap;
+        wrap.wrap(heard, 0, 0, static_cast<std::uint64_t>(got));
+        if (wrap.templateId() == sbe::ReplicationAck::sbeTemplateId()) {
+          sequencer.onReplicationAck(replicationAckOf(heard));
+          lastRepair = clock.now();
+        } else if (wrap.templateId() == sbe::RewindRequest::sbeTemplateId()) {
+          sequencer.reshipUnacked();
+          lastRepair = clock.now();
+        }
+      }
+      if (sequencer.pending() > 0 && clock.now() - lastRepair > 200'000'000ULL) {
+        sequencer.reshipUnacked();
+        lastRepair = clock.now();
+      }
     }
     if (sequenced > 0 || sequencer.published() > lastPublished) {
       sequencer.flush();
@@ -306,6 +423,19 @@ int liveLoop(std::vector<common::SpscRing>& ins, std::vector<common::SpscRing>& 
       });
     }
   }
+  if (repairSocket >= 0) {
+    for (int spins = 0; spins < 1'000'000 && sequencer.pending() > 0; spins++) {
+      char heard[512];
+      const long got = ::recv(repairSocket, heard, sizeof heard, 0);
+      if (got > 0) {
+        sbe::MessageHeader wrap;
+        wrap.wrap(heard, 0, 0, static_cast<std::uint64_t>(got));
+        if (wrap.templateId() == sbe::ReplicationAck::sbeTemplateId()) {
+          sequencer.onReplicationAck(replicationAckOf(heard));
+        }
+      }
+    }
+  }
   if (sequencer.pending() == 0) {
     sequencer.endSession();
   } else {
@@ -317,7 +447,8 @@ int liveLoop(std::vector<common::SpscRing>& ins, std::vector<common::SpscRing>& 
 
 int live(const std::string& inList, const std::string& ackList, const std::string& outPath,
          const std::string& journalPath, const std::string& udp, const bool safe,
-         const std::string& replicatePath, const std::string& replicateAcksPath) {
+         const std::string& replicatePath, const std::string& replicateAcksPath,
+         const std::string& replicateUdp, const std::string& repairPort) {
   const std::vector<std::string> inPaths = split(inList);
   const std::vector<std::string> ackPaths = split(ackList);
   if (inPaths.size() != ackPaths.size()) {
@@ -344,6 +475,26 @@ int live(const std::string& inList, const std::string& ackList, const std::strin
   common::journal::Writer journal(journalPath);
 
   if (safe) {
+    if (!replicateUdp.empty()) {
+      // The link leaves the box: ranges to the standby's port, acknowledgments and rewind
+      // requests back on the repair port, loss the reship's business.
+      const std::size_t at = replicateUdp.find(':');
+      if (at == std::string::npos || repairPort.empty()) {
+        std::fprintf(stderr,
+                     "the safe policy over UDP needs --replicate-udp HOST:PORT and"
+                     " --repair-port N\n");
+        return 2;
+      }
+      UdpLink link(replicateUdp.substr(0, at),
+                   static_cast<std::uint16_t>(std::stoi(replicateUdp.substr(at + 1))));
+      const int repair = boundUdp(static_cast<std::uint16_t>(std::stoi(repairPort)));
+      if (repair < 0) {
+        std::fprintf(stderr, "cannot bind the repair port %s\n", repairPort.c_str());
+        return 2;
+      }
+      return liveLoop(ins, acks, out, journal, packets, link, sequencing::Durability::SAFE, nullptr,
+                      repair);
+    }
     if (replicatePath.empty() || replicateAcksPath.empty()) {
       std::fprintf(stderr, "the safe policy needs --replicate and --replicate-acks rings\n");
       return 2;
@@ -408,6 +559,32 @@ int witnessMode(const std::string& requestList, const std::string& responseList,
   return 0;
 }
 
+int standbyUdpMode(const std::uint16_t port, const std::string& voiceHost,
+                   const std::uint16_t voicePort, const std::string& journalPath) {
+  const int wire = boundUdp(port);
+  if (wire < 0) {
+    std::fprintf(stderr, "cannot bind the standby port %u\n", port);
+    return 2;
+  }
+  UdpVoice voice(voiceHost, voicePort);
+  common::journal::Writer journal(journalPath);
+  sequencing::Standby<UdpVoice, common::journal::Writer> standby(journal, voice);
+  sequencing::Relink<decltype(standby), UdpVoice> relink(standby, voice);
+  std::signal(SIGINT, onSignal);
+  std::signal(SIGTERM, onSignal);
+  char datagram[2048];
+  while (stopped == 0 && !standby.ended()) {
+    const long got = ::recv(wire, datagram, sizeof datagram, 0);
+    if (got > 0) {
+      relink.onPacket(datagram, static_cast<std::size_t>(got));
+    } else {
+      ::usleep(100);
+    }
+  }
+  ::close(wire);
+  return 0;
+}
+
 int standbyMode(const std::string& inPath, const std::string& acksPath,
                 const std::string& journalPath) {
   common::SpscRing in = common::SpscRing::attach(inPath);
@@ -448,6 +625,18 @@ int main(const int count, char** values) {
     return witnessMode(leaseRequests, leaseResponses,
                        (ttl.empty() ? 100 : std::stoull(ttl)) * 1'000'000ULL);
   }
+  const std::string standbyUdp = argument(count, values, "--standby-udp");
+  const std::string repairUdp = argument(count, values, "--repair-udp");
+  if (!standbyUdp.empty() && !repairUdp.empty() && !journalPath.empty()) {
+    const std::size_t at = repairUdp.find(':');
+    if (at == std::string::npos) {
+      std::fprintf(stderr, "--repair-udp wants HOST:PORT\n");
+      return 2;
+    }
+    return standbyUdpMode(
+        static_cast<std::uint16_t>(std::stoi(standbyUdp)), repairUdp.substr(0, at),
+        static_cast<std::uint16_t>(std::stoi(repairUdp.substr(at + 1))), journalPath);
+  }
   if (!standbyIn.empty() && !standbyAcks.empty() && !journalPath.empty()) {
     return standbyMode(standbyIn, standbyAcks, journalPath);
   }
@@ -458,15 +647,18 @@ int main(const int count, char** values) {
   }
   if (!inList.empty() && !acksPath.empty() && !outPath.empty() && !journalPath.empty()) {
     return live(inList, acksPath, outPath, journalPath, udp, safe,
-                argument(count, values, "--replicate"),
-                argument(count, values, "--replicate-acks"));
+                argument(count, values, "--replicate"), argument(count, values, "--replicate-acks"),
+                argument(count, values, "--replicate-udp"),
+                argument(count, values, "--repair-port"));
   }
   std::fprintf(stderr,
                "usage: sequencer --submissions FILE --journal J [--packets P] [--acks A]"
                " [--policy local|safe] [--standby-journal SJ] [--end-session]\n"
                "       sequencer --in R1,R2 --acks A1,A2 --out RING --journal J"
                " [--udp HOST:PORT] [--policy safe --replicate RING --replicate-acks RING]\n"
+               "                 [--policy safe --replicate-udp HOST:PORT --repair-port N]\n"
                "       sequencer --standby-in RING --standby-acks RING --journal J\n"
+               "       sequencer --standby-udp PORT --repair-udp HOST:PORT --journal J\n"
                "       sequencer --witness --lease-requests R1,R2 --lease-responses S1,S2"
                " [--ttl-ms N]\n");
   return 2;

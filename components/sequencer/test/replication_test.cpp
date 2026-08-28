@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -201,6 +202,76 @@ TEST_CASE("end of session travels the link and closes the standby") {
   remote.standby.onRange(wired.link.ranges.back().data(), wired.link.ranges.back().size());
   CHECK(remote.standby.ended());
   CHECK(remote.standby.held() == flow.size());
+  std::filesystem::remove(primaryPath);
+  std::filesystem::remove(standbyPath);
+}
+
+TEST_CASE("a lossy wire is repaired by the reship, and exactly-once holds across it") {
+  const std::vector<CommandWriter::Framed> flow = generatedFlow(71, 800);
+  std::vector<std::vector<char>> records = dealtSubmissions(flow, 2);
+  const std::filesystem::path primaryPath = scratch("lossy.exj");
+  const std::filesystem::path standbyPath = scratch("lossy.standby.exj");
+
+  {
+    Wired wired(primaryPath.string(), 2, Durability::SAFE);
+    WiredStandby remote(standbyPath.string());
+    for (std::vector<char>& record : records) {
+      wired.sequencer.onSubmission(record.data(), record.size());
+    }
+
+    // The wire drops every third datagram, first sends and reships alike; the relink parks what
+    // arrives early and asks for what is missing, and the standby behind it never sees a gap.
+    // Acknowledgments ride back losslessly here, because their loss only means more reshipping.
+    RewindChannel asked;
+    Relink<decltype(remote.standby), RewindChannel> relink(remote.standby, asked);
+    std::size_t linkConsumed = 0;
+    std::size_t ackConsumed = 0;
+    std::uint64_t crossings = 0;
+    const auto deliverWithLoss = [&] {
+      for (; linkConsumed < wired.link.ranges.size(); linkConsumed++) {
+        if (crossings++ % 3 == 2) {
+          continue;
+        }
+        std::vector<char> range = wired.link.ranges[linkConsumed];
+        relink.onPacket(range.data(), range.size());
+      }
+      const std::vector<std::uint64_t> upTo = readReplicationAcks(
+          std::vector<char>(remote.acks.captured().begin() + static_cast<long>(ackConsumed),
+                            remote.acks.captured().end()));
+      ackConsumed = remote.acks.captured().size();
+      for (const std::uint64_t sequence : upTo) {
+        wired.sequencer.onReplicationAck(sequence);
+      }
+    };
+
+    deliverWithLoss();
+    REQUIRE(asked.requests.size() > 0);
+    REQUIRE(wired.sequencer.pending() > 0);
+
+    // The repair loop a live primary runs on its resend clock: reship, deliver, hear.
+    int rounds = 0;
+    while (wired.sequencer.pending() > 0 && rounds++ < 64) {
+      wired.sequencer.reshipUnacked();
+      deliverWithLoss();
+    }
+    CHECK(wired.sequencer.pending() == 0);
+    CHECK(wired.sequencer.published() == flow.size());
+    CHECK(remote.standby.held() == flow.size());
+    CHECK(remote.standby.violations() == 0);
+    CHECK(relink.parked() == 0);
+
+    // Exactly once, in order, and the world only ever heard each command once.
+    CHECK(wired.out.captured() == stamped(flow));
+    wired.sequencer.endSession();
+  }
+
+  // The standby's journal is the primary's, byte for byte, loss and all.
+  const auto bytesOf = [](const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::vector<char>((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+  };
+  CHECK(bytesOf(primaryPath) == bytesOf(standbyPath));
   std::filesystem::remove(primaryPath);
   std::filesystem::remove(standbyPath);
 }
