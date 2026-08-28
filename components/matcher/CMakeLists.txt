@@ -39,6 +39,20 @@ target_link_libraries(matcher-broadcast PRIVATE exchange-matcher Catch2::Catch2W
 add_executable(matcher-shard test/shard_test.cpp)
 target_link_libraries(matcher-shard PRIVATE matcher-test-harness Catch2::Catch2WithMain)
 
+add_executable(matcher-twin test/twin_test.cpp)
+target_link_libraries(matcher-twin PRIVATE matcher-test-harness Catch2::Catch2WithMain)
+
+# The availability drill: real processes, a real wire, and a death nobody downstream notices.
+add_executable(matcher-failover test/failover_socket_test.cpp)
+target_include_directories(matcher-failover
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../sequencer/test)
+target_link_libraries(matcher-failover
+  PRIVATE exchange-matcher exchange-sequencer matcher-test-harness Catch2::Catch2WithMain)
+target_compile_definitions(matcher-failover
+  PRIVATE MATCHER_BINARY="$<TARGET_FILE:matcher>"
+          SEQUENCER_BINARY="$<TARGET_FILE:sequencer>")
+add_dependencies(matcher-failover matcher sequencer)
+
 # The proofs that run as binaries: the allocation probe whose allocator counts after
 # initialisation, the flow generator that writes the shared journal, and the measurement harness.
 add_executable(allocation-probe test/allocation_probe_main.cpp)
@@ -64,4 +78,6 @@ catch_discover_tests(matcher-determinism)
 catch_discover_tests(matcher-ring)
 catch_discover_tests(matcher-broadcast)
 catch_discover_tests(matcher-shard)
+catch_discover_tests(matcher-twin)
+catch_discover_tests(matcher-failover)
 catch_discover_tests(matcher-allocation)

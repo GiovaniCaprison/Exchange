@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "broadcast_ring.hpp"
+#include "exchange_protocol/MessageHeader.h"
 #include "journal.hpp"
 #include "ranges.hpp"
 #include "spsc_ring.hpp"
@@ -130,6 +132,43 @@ class PacketSource {
   Rewind& rewind_;
   std::vector<std::vector<char>> parked_;
   bool ended_ = false;
+};
+
+// The event stream's twin seat: one or more broadcast rings carrying the same per-partition
+// event stream, a warm matcher's beside its primary's, deduplicated by the sequence every event
+// carries, gap free from one per partition. Twins are the event stream's A and B: whichever
+// ring speaks first is the one that counts, a covered sequence is skipped wherever it arrives
+// again, and a twin dying is therefore a non-event, because the other one was always saying the
+// same thing. A seat attached late replays what the rings retain and skips what it has covered,
+// which is also what re-seating after a failover means.
+class SequencedSeat {
+ public:
+  void join(BroadcastReader reader) { readers_.push_back(std::move(reader)); }
+
+  template <typename Handler>
+  std::size_t poll(Handler&& handler) {
+    std::size_t delivered = 0;
+    for (BroadcastReader& reader : readers_) {
+      reader.poll([&](char* message, const std::size_t length) {
+        std::uint64_t sequence = 0;
+        std::memcpy(&sequence, message + protocol::MessageHeader::encodedLength(), sizeof sequence);
+        if (sequence <= seen_) {
+          return;
+        }
+        seen_ = sequence;
+        handler(message, length);
+        delivered++;
+      });
+    }
+    return delivered;
+  }
+
+  std::uint64_t seen() const { return seen_; }
+  std::size_t twins() const { return readers_.size(); }
+
+ private:
+  std::vector<BroadcastReader> readers_;
+  std::uint64_t seen_ = 0;
 };
 
 }  // namespace exchange::common::stream

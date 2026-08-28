@@ -43,6 +43,7 @@
 #include "clock.hpp"
 #include "gateway.hpp"
 #include "spsc_ring.hpp"
+#include "stream.hpp"
 
 namespace {
 
@@ -150,14 +151,28 @@ int main(const int count, char** values) {
 
   common::SpscRing submissions = common::SpscRing::create(submissionsPath, 1 << 22);
   common::SpscRing acks = attachPatiently(acksPath);
-  // One seat per shard: the event stream may arrive as several broadcast rings.
-  std::vector<common::BroadcastReader> events;
+  // One seat per shard, each seat holding every twin of that shard's event stream: shards are
+  // separated by commas, twins within a shard by a pipe, and the seat deduplicates by the event
+  // sequence, so a twin matcher dying is a non-event.
+  std::vector<common::stream::SequencedSeat> events;
   {
     std::size_t at = 0;
     while (at < eventsPath.size()) {
       const std::size_t comma = eventsPath.find(',', at);
-      events.push_back(joinPatiently(
-          eventsPath.substr(at, comma == std::string::npos ? std::string::npos : comma - at)));
+      const std::string group =
+          eventsPath.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+      common::stream::SequencedSeat seat;
+      std::size_t twin = 0;
+      while (twin < group.size()) {
+        const std::size_t pipe = group.find('|', twin);
+        seat.join(joinPatiently(
+            group.substr(twin, pipe == std::string::npos ? std::string::npos : pipe - twin)));
+        if (pipe == std::string::npos) {
+          break;
+        }
+        twin = pipe + 1;
+      }
+      events.push_back(std::move(seat));
       if (comma == std::string::npos) {
         break;
       }
@@ -277,7 +292,7 @@ int main(const int count, char** values) {
     }
     answerKill();
     acks.poll([&](char* message, const std::size_t length) { gateway.onAck(message, length); });
-    for (common::BroadcastReader& shard : events) {
+    for (common::stream::SequencedSeat& shard : events) {
       shard.poll(
           [&](char* message, const std::size_t length) { gateway.onEvent(message, length); });
     }

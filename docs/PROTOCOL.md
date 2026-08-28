@@ -50,6 +50,11 @@ a gateway acknowledges its clients by matching input sequences. The public feed 
 the field, so the public convention stays ITCH-shaped. Carrying the timestamp rather than stamping
 again is what keeps replay byte exact (P-2, P-3).
 
+The event sequence is also the continuity rule: a consumer skips any event whose sequence it has
+covered, wherever it arrives. Two matchers fed the same commands emit byte-identical streams, so
+their two rings are the event stream's A and B, a seat over both hears one stream, and a twin
+dying, or a consumer re-seating after one died, changes nothing delivered.
+
 ## Commands
 
 | Message | Body after the context | Notes |

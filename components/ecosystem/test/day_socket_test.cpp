@@ -27,8 +27,20 @@ bool appears(const std::filesystem::path& path) {
 }
 
 void launch(const std::string& command, const std::filesystem::path& pids) {
-  REQUIRE(std::system((command + " & echo $! >> " + pids.string()).c_str()) == 0);
+  // Daemons write to their own logs, never to this test's pipe, or a failure would leave ctest
+  // reading a pipe the orphans hold open forever.
+  static int voice = 0;
+  REQUIRE(std::system((command + " > " + pids.parent_path().string() + "/log" +
+                       std::to_string(++voice) + ".txt 2>&1 & echo $! >> " + pids.string())
+                          .c_str()) == 0);
 }
+
+// Kills whatever is left however the test ends, because a REQUIRE that throws must not leak a
+// venue.
+struct Reaper {
+  std::string pids;
+  ~Reaper() { std::system(("kill $(cat " + pids + ") 2>/dev/null; sleep 1").c_str()); }
+};
 
 }  // namespace
 
@@ -38,6 +50,7 @@ TEST_CASE("the whole venue runs as processes and its participants trade over the
   std::filesystem::create_directories(room);
   const std::filesystem::path pids = room / "pids";
   const std::string in = room.string() + "/";
+  Reaper reaper{pids.string()};
 
   // The carriers who create their rings first, then everyone downstream in dependency order.
   launch(std::string(GATEWAY_BINARY) + " --listen 36101 --submissions " + in + "gw.ring --acks " +
@@ -79,8 +92,6 @@ TEST_CASE("the whole venue runs as processes and its participants trade over the
 
   // The dealer's measurement landed, and the venue journaled a day that actually happened.
   CHECK(appears(room / "wire-to-wire-manifest.json"));
-  std::system(("kill $(cat " + pids.string() + ") 2>/dev/null; sleep 1").c_str());
   CHECK(std::filesystem::file_size(room / "seq.exj") > 0);
   CHECK(std::filesystem::file_size(room / "matcher.exj") > 0);
-  std::filesystem::remove_all(room);
 }

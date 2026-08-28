@@ -42,6 +42,7 @@
 #include "journal.hpp"
 #include "leadership.hpp"
 #include "loopback.hpp"
+#include "rewinder.hpp"
 #include "sequencer.hpp"
 #include "spsc_ring.hpp"
 #include "standby.hpp"
@@ -559,6 +560,46 @@ int witnessMode(const std::string& requestList, const std::string& responseList,
   return 0;
 }
 
+// The re-request server as its own process, MoldUDP64's split: it reads the journal the primary
+// appends, serves any missed range to whoever asks, and never encumbers the sequencing thread,
+// because rewind is the cold path and the journal is the durable record.
+int rewinderMode(const std::string& journalPath, const std::uint16_t port,
+                 const std::uint32_t epoch) {
+  const int wire = boundUdp(port);
+  if (wire < 0) {
+    std::fprintf(stderr, "cannot bind the rewind port %u\n", port);
+    return 2;
+  }
+  sequencing::Rewinder rewinder(journalPath, epoch);
+  std::signal(SIGINT, onSignal);
+  std::signal(SIGTERM, onSignal);
+  char ask[512];
+  while (stopped == 0) {
+    sockaddr_in asker{};
+    socklen_t askerSize = sizeof asker;
+    const long got =
+        ::recvfrom(wire, ask, sizeof ask, 0, reinterpret_cast<sockaddr*>(&asker), &askerSize);
+    if (got <= 0) {
+      ::usleep(1'000);
+      continue;
+    }
+    sbe::MessageHeader wrap;
+    wrap.wrap(ask, 0, 0, static_cast<std::uint64_t>(got));
+    if (wrap.templateId() != sbe::RewindRequest::sbeTemplateId()) {
+      continue;
+    }
+    sbe::RewindRequest request;
+    request.wrapForDecode(ask, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
+                          static_cast<std::uint64_t>(got));
+    rewinder.serve(
+        request.firstSequence(), request.count(), [&](char* packet, const std::size_t length) {
+          ::sendto(wire, packet, length, 0, reinterpret_cast<const sockaddr*>(&asker), askerSize);
+        });
+  }
+  ::close(wire);
+  return 0;
+}
+
 int standbyUdpMode(const std::uint16_t port, const std::string& voiceHost,
                    const std::uint16_t voicePort, const std::string& journalPath) {
   const int wire = boundUdp(port);
@@ -620,6 +661,16 @@ int main(const int count, char** values) {
     return 2;
   }
 
+  if (flagged(count, values, "--rewinder") && !journalPath.empty()) {
+    const std::string port = argument(count, values, "--rewind-port");
+    const std::string epoch = argument(count, values, "--epoch");
+    if (port.empty()) {
+      std::fprintf(stderr, "the rewinder needs --rewind-port\n");
+      return 2;
+    }
+    return rewinderMode(journalPath, static_cast<std::uint16_t>(std::stoi(port)),
+                        epoch.empty() ? 1 : static_cast<std::uint32_t>(std::stoul(epoch)));
+  }
   if (flagged(count, values, "--witness") && !leaseRequests.empty() && !leaseResponses.empty()) {
     const std::string ttl = argument(count, values, "--ttl-ms");
     return witnessMode(leaseRequests, leaseResponses,
@@ -659,6 +710,7 @@ int main(const int count, char** values) {
                "                 [--policy safe --replicate-udp HOST:PORT --repair-port N]\n"
                "       sequencer --standby-in RING --standby-acks RING --journal J\n"
                "       sequencer --standby-udp PORT --repair-udp HOST:PORT --journal J\n"
+               "       sequencer --rewinder --journal J --rewind-port N [--epoch E]\n"
                "       sequencer --witness --lease-requests R1,R2 --lease-responses S1,S2"
                " [--ttl-ms N]\n");
   return 2;

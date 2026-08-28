@@ -31,6 +31,7 @@
 #include "exchange_protocol/RewindRequest.h"
 #include "glimpse.hpp"
 #include "publisher.hpp"
+#include "stream.hpp"
 
 namespace {
 
@@ -130,13 +131,28 @@ int main(const int count, char** values) {
     }
     throw std::runtime_error("gave up waiting for " + path);
   };
-  std::vector<common::BroadcastReader> in;
+  // One seat per shard, each seat holding every twin of that shard's event stream: shards are
+  // separated by commas, twins within a shard by a pipe, and the seat deduplicates by the event
+  // sequence, so a twin matcher dying is a non-event.
+  std::vector<common::stream::SequencedSeat> in;
   {
     std::size_t at = 0;
     while (at < inPath.size()) {
       const std::size_t comma = inPath.find(',', at);
-      in.push_back(joinPatiently(
-          inPath.substr(at, comma == std::string::npos ? std::string::npos : comma - at)));
+      const std::string group =
+          inPath.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+      common::stream::SequencedSeat seat;
+      std::size_t twin = 0;
+      while (twin < group.size()) {
+        const std::size_t pipe = group.find('|', twin);
+        seat.join(joinPatiently(
+            group.substr(twin, pipe == std::string::npos ? std::string::npos : pipe - twin)));
+        if (pipe == std::string::npos) {
+          break;
+        }
+        twin = pipe + 1;
+      }
+      in.push_back(std::move(seat));
       if (comma == std::string::npos) {
         break;
       }
@@ -190,7 +206,7 @@ int main(const int count, char** values) {
 
   while (stopped == 0) {
     std::size_t consumed = 0;
-    for (common::BroadcastReader& shard : in) {
+    for (common::stream::SequencedSeat& shard : in) {
       consumed += shard.poll(
           [&](char* message, const std::size_t length) { builder.onEvent(message, length); });
     }
