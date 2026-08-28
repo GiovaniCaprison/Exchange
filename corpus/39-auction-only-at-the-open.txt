@@ -1,0 +1,20 @@
+# Limit-on-open lives for the call: it rests before the open, crosses in the uncrossing, and
+# whatever the call did not fill expires the moment continuous trading begins; the GTC beside it
+# stands.
+INSTRUMENT tick=5 lot=1 min=1 max=1000000 band=500 open=100000 alloc=PRICE_TIME
+NEW BUY LIMIT GTC 100000 30 AUCTION_ONLY #1
+ACCEPTED #1 order=1
+RESTED order=1 BUY 100000 30
+NEW BUY LIMIT GTC 99995 10 #2
+ACCEPTED #2 order=2
+RESTED order=2 BUY 99995 10
+SESSION OPENING_AUCTION
+STATE OPENING_AUCTION
+NEW SELL LIMIT GTC 100000 20 #3
+ACCEPTED #3 order=3
+RESTED order=3 SELL 100000 20
+INDICATIVE 100000 20
+SESSION CONTINUOUS
+EXECUTED exec=1 aggressor=1 resting=3 100000 20
+STATE CONTINUOUS
+REMOVED order=1 10 EXPIRED

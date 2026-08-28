@@ -80,6 +80,7 @@ class Engine {
     taker.pricing = static_cast<std::uint8_t>(command.pricing());
     taker.timeInForce = static_cast<std::uint8_t>(command.timeInForce());
     taker.postOnly = command.flags().postOnly();
+    taker.auctionOnly = command.flags().auctionOnly();
     const std::int64_t price = command.price();
     const std::int64_t triggerPrice = command.triggerPrice();
 
@@ -187,6 +188,7 @@ class Engine {
     taker.pricing = cold.pricing;
     taker.timeInForce = cold.timeInForce;
     taker.postOnly = cold.postOnly;
+    taker.auctionOnly = cold.auctionOnly != 0;
     taker.limitRank = limitRankOf(taker);
     const std::int64_t shown = hot.displayed;
     book_.remove(cold.side, resting);
@@ -234,21 +236,29 @@ class Engine {
     if (callPhase(state_)) {
       reportIndicative();
     }
+    if (state_ == CONTINUOUS) {
+      // The call the auction-only orders lived for is over, filled or not: limit-on-open and
+      // limit-on-close leftovers expire when continuous trading begins.
+      expireResidents(false);
+    }
     if (state_ == CLOSED) {
-      expireDayOrders();
+      expireResidents(true);
     }
   }
 
-  // The close is the end of the session a DAY order lives in: everything resting or waiting
-  // under DAY leaves with its own reason, in arrival order so a replay expires the same book the
-  // same way, and GOOD_TILL_CANCEL stands for tomorrow through the snapshot.
-  void expireDayOrders() {
+  // The close is the end of the session a DAY order lives in, and the end of a call is the end
+  // of an auction-only order's: everything due leaves with the reason EXPIRED, in arrival order
+  // so a replay expires the same book the same way, and GOOD_TILL_CANCEL stands for tomorrow
+  // through the snapshot.
+  void expireResidents(const bool dayToo) {
     gathered_.clear();
     book_.all(gathered_);
     triggers_.all(gathered_);
     sortByArrival(gathered_);
     for (const std::int32_t slot : gathered_) {
-      if (slab_.cold(slot).timeInForce != DAY) {
+      const bool due =
+          slab_.cold(slot).auctionOnly != 0 || (dayToo && slab_.cold(slot).timeInForce == DAY);
+      if (!due) {
         continue;
       }
       const std::uint64_t id = slab_.hot(slot).id;
@@ -319,6 +329,7 @@ class Engine {
     std::uint8_t pricing;
     std::uint8_t timeInForce;
     bool postOnly;
+    bool auctionOnly;
   };
 
   static constexpr std::int32_t LIMIT = sbe::Pricing::LIMIT;
@@ -481,6 +492,7 @@ class Engine {
     cold.pricing = taker.pricing;
     cold.timeInForce = taker.timeInForce;
     cold.postOnly = taker.postOnly ? 1 : 0;
+    cold.auctionOnly = taker.auctionOnly ? 1 : 0;
     return slot;
   }
 
@@ -512,6 +524,7 @@ class Engine {
       taker.pricing = cold.pricing;
       taker.timeInForce = cold.timeInForce;
       taker.postOnly = cold.postOnly != 0;
+      taker.auctionOnly = cold.auctionOnly != 0;
       taker.limitRank = limitRankOf(taker);
       slab_.release(fired);
       if (state_ == CONTINUOUS) {
@@ -739,6 +752,16 @@ class Engine {
     if (inconsistent(taker)) {
       return refusal(sbe::RejectReason::INVALID_FIELDS);
     }
+    if (taker.auctionOnly) {
+      // Limit-on-open and limit-on-close live only in the calls; a stop that fires into an
+      // auction is not a thing this venue sells.
+      if (state_ == CONTINUOUS) {
+        return refusal(sbe::RejectReason::STATE_NOT_PERMITTED);
+      }
+      if (triggerPrice != 0) {
+        return refusal(sbe::RejectReason::INVALID_FIELDS);
+      }
+    }
     std::int64_t tick = 0;
     if (taker.pricing == LIMIT) {
       tick = tickOrRefusal(price);
@@ -779,6 +802,12 @@ class Engine {
   // Combinations that contradict themselves: a market order told to rest, and a post-only order
   // told never to rest, are each an instruction that cannot be followed.
   static bool inconsistent(const Taker& taker) {
+    if (taker.auctionOnly && (taker.pricing == MARKET || taker.timeInForce >= IOC)) {
+      // An auction-only order rests until its call, so it cannot be a market order or an
+      // immediacy demand; market-on-open would need a resting market order, which this book
+      // does not sell.
+      return true;
+    }
     if (taker.pricing == MARKET) {
       return taker.postOnly || taker.timeInForce <= DAY;
     }

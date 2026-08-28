@@ -19,7 +19,8 @@
 namespace exchange::common::snapshot {
 
 inline constexpr char MAGIC[8] = {'E', 'X', 'S', 'N', 'A', 'P', '0', '1'};
-inline constexpr std::uint32_t STATE_VERSION = 1;
+// Version 2: the slab's cold half gained the auction-only flag.
+inline constexpr std::uint32_t STATE_VERSION = 2;
 
 template <typename Partition>
 void write(const std::string& path, const Partition& partition) {

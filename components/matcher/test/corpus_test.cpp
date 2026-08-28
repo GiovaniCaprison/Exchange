@@ -7,7 +7,7 @@
 //   INSTRUMENT tick=. lot=. min=. max=. band=. open=. alloc=PRICE_TIME|PRO_RATA [inst=.]
 //   SESSION <STATE> [inst=.]
 //   NEW <SIDE> <PRICING> <TIF> <price> <qty> #<clientOrderId> [p=.] [min=.] [display=.]
-//       [trigger=.] [smp=.] [POST_ONLY] [inst=.]
+//       [trigger=.] [smp=.] [POST_ONLY] [AUCTION_ONLY] [inst=.]
 //   CANCEL #<clientOrderId> [p=.] [inst=.]
 //   REPLACE #<clientOrderId> <qty> <price> [p=.] [inst=.]
 //   MASS [p=.] [inst=.]
@@ -205,7 +205,8 @@ Run run(const Fixture& fixture) {
           static_cast<std::uint32_t>(value(words, "p", 1)), sideOf(words[1]), pricingOf(words[2]),
           timeInForceOf(words[3]), present(words, "POST_ONLY"), std::stoll(words[4]),
           std::stoll(words[5]), value(words, "min", 0), value(words, "display", 0),
-          value(words, "trigger", 0), static_cast<std::uint64_t>(value(words, "smp", 0)));
+          value(words, "trigger", 0), static_cast<std::uint64_t>(value(words, "smp", 0)),
+          present(words, "AUCTION_ONLY"));
     } else if (first == "CANCEL") {
       framed = writer.cancel(static_cast<std::uint32_t>(value(words, "inst", instrument)),
                              reference(words), static_cast<std::uint32_t>(value(words, "p", 1)));
