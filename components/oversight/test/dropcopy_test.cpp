@@ -160,3 +160,36 @@ TEST_CASE("a command poisons the session, and heartbeats keep a quiet one alive"
   CHECK(wired.machine.wantsClose(slot));
   CHECK(wired.machine.poisoned() == 1);
 }
+
+TEST_CASE("a scope that outgrows its stream ends its watcher alone, and the server does not") {
+  Wired wired;
+  const int slot = wired.watch(7, 90'042);
+  wired.read(slot);
+
+  for (std::uint64_t orderId = 1; wired.machine.exhausted() == 0; orderId++) {
+    REQUIRE(orderId <= 70'000);
+    std::vector<char> event = acceptedEvent(orderId, 7, orderId);
+    wired.machine.onEvent(event.data(), event.size());
+    wired.machine.drained(slot, wired.machine.outbound(slot).second);
+  }
+  CHECK(wired.machine.exhausted() == 1);
+  CHECK(wired.machine.wantsClose(slot));
+  wired.machine.closed(slot);
+
+  const int refused = wired.watch(7, 90'042);
+  auto messages = wired.read(refused);
+  REQUIRE(messages.size() == 1);
+  REQUIRE(messages[0].first == sbe::LoginRejected::sbeTemplateId());
+  sbe::MessageHeader wrap;
+  wrap.wrap(messages[0].second.data(), 0, 0, messages[0].second.size());
+  sbe::LoginRejected rejected;
+  rejected.wrapForDecode(messages[0].second.data(), wrap.encodedLength(), wrap.blockLength(),
+                         wrap.version(), messages[0].second.size());
+  CHECK(rejected.reason() == sbe::LoginRefusal::EXHAUSTED);
+
+  // The other scope is untouched.
+  const int fine = wired.watch(8, 90'043);
+  auto accepted = wired.read(fine);
+  REQUIRE(accepted.size() == 1);
+  CHECK(accepted[0].first == sbe::LoginAccepted::sbeTemplateId());
+}

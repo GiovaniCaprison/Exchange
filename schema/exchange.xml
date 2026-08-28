@@ -70,6 +70,8 @@
       <validValue name="SEQUENCE_AHEAD">3</validValue>
       <!-- The kill switch's word: the participant is blocked at the venue's door. -->
       <validValue name="KILLED">4</validValue>
+      <!-- The session's retained stream filled; replay can no longer be promised today. -->
+      <validValue name="EXHAUSTED">5</validValue>
     </enum>
     <enum name="Allocation" encodingType="uint8">
       <validValue name="PRICE_TIME">0</validValue>

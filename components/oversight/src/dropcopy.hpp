@@ -235,6 +235,7 @@ class DropCopy {
 
   std::uint64_t poisoned() const { return poisoned_; }
   std::uint64_t rejections() const { return rejections_; }
+  std::uint64_t exhausted() const { return exhausted_; }
 
  private:
   enum class State : std::uint8_t { FREE, AWAITING_LOGIN, ESTABLISHED, ENDED };
@@ -261,6 +262,7 @@ class DropCopy {
     std::vector<std::size_t> offsets;
     std::vector<std::size_t> lengths;
     int boundTo = -1;
+    bool exhausted = false;
   };
 
   template <typename Message>
@@ -314,6 +316,10 @@ class DropCopy {
     }
     if (watchers_[static_cast<std::size_t>(streamAt)].credential != request.credential()) {
       refuse(connection, sbe::LoginRefusal::BAD_CREDENTIAL);
+      return;
+    }
+    if (streams_[static_cast<std::size_t>(streamAt)].exhausted) {
+      refuse(connection, sbe::LoginRefusal::EXHAUSTED);
       return;
     }
     Stream& stream = streams_[static_cast<std::size_t>(streamAt)];
@@ -395,9 +401,20 @@ class DropCopy {
         continue;
       }
       Stream& stream = streams_[at];
+      if (stream.exhausted) {
+        continue;
+      }
       if (stream.log.size() + length + sizeof(std::uint16_t) > LOG_BYTES ||
           stream.offsets.size() == LOG_ENTRIES) {
-        continue;  // A full stream stops retaining; the session survives on the live tail.
+        // Sized for the session, and a scope that outgrows it ends, politely and alone: a live
+        // tail without retention would break the byte-exact promise silently, so the watcher is
+        // told and the door answers EXHAUSTED until tomorrow.
+        stream.exhausted = true;
+        exhausted_++;
+        if (stream.boundTo >= 0) {
+          end(connections_[static_cast<std::size_t>(stream.boundTo)]);
+        }
+        continue;
       }
       const std::uint16_t prefix = static_cast<std::uint16_t>(length);
       const std::size_t start = stream.log.size();
@@ -427,6 +444,7 @@ class DropCopy {
   common::Ownership owners_;
   std::uint64_t poisoned_ = 0;
   std::uint64_t rejections_ = 0;
+  std::uint64_t exhausted_ = 0;
 };
 
 }  // namespace exchange::oversight

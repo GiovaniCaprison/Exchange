@@ -215,6 +215,12 @@ demands: a killed participant's session ends, its logins answer KILLED, and its 
 once, whatever its disconnect setting; reviving it reopens the door and nothing more. Neither
 sweep consults the risk gate, because unwinding risk is never refused.
 
+The retained stream behind each session is sized for the session, and a session that outgrows it
+ends, politely and alone: the venue does not die of one participant's day, byte-exact replay
+cannot be promised once retention stops, and the door answers EXHAUSTED until the next session.
+The unclean end sweeps a cancel-on-disconnect participant's books, which is the safe reading of a
+participant who can no longer be told anything. Drop copy scopes carry the same posture.
+
 ## The gate's risk checks
 
 Before a command is forwarded to the sequencer it passes the gateway's risk gate, so what the
