@@ -8,10 +8,8 @@
 // as SurveillanceAlert messages through the sink, bound for the alert journal, so a case is a
 // replayable artifact.
 //
-// Ownership is learned from acceptances like every routing consumer. Orders that rested leave
-// the table when they leave the book; an aggressor that filled whole leaves no removal, so
-// unrested entries age out by orderId distance on a periodic sweep, which is deterministic
-// because orderIds are the engine's own monotone numbering.
+// Ownership is learned from acceptances like every routing consumer, through the shared
+// discipline in components/common/ownership.hpp.
 
 #pragma once
 
@@ -26,6 +24,7 @@
 #include "exchange_protocol/OrderRemoved.h"
 #include "exchange_protocol/OrderRested.h"
 #include "exchange_protocol/SurveillanceAlert.h"
+#include "ownership.hpp"
 
 namespace exchange::oversight {
 
@@ -46,14 +45,9 @@ struct Config {
 template <typename Sink>
 class Surveillance {
  public:
-  static constexpr std::size_t ORDERS = 1 << 17;
   static constexpr std::size_t HISTORY = 256;
-  static constexpr std::uint64_t AGE_HORIZON = 1 << 16;
-  static constexpr std::size_t SWEEP_EVERY = 4096;
 
   Surveillance(Sink& sink, const Config config) : sink_(sink), config_(config) {
-    keys_.assign(ORDERS, 0);
-    orders_.resize(ORDERS);
     participants_.reserve(64);
     histories_.reserve(64);
   }
@@ -66,43 +60,23 @@ class Surveillance {
         sbe::OrderAccepted event;
         event.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
                             length);
-        Watched& order = slotFor(event.orderId());
-        order.orderId = event.orderId();
-        order.participant = event.participantId();
-        order.instrument = event.context().instrumentId();
-        order.remaining = 0;
-        order.price = 0;
-        order.rested = false;
-        if (event.orderId() > newestOrderId_) {
-          newestOrderId_ = event.orderId();
-        }
-        if (++accepted_ % SWEEP_EVERY == 0) {
-          sweep();
-        }
+        owners_.accepted(event.orderId(), event.participantId(), event.context().instrumentId());
         break;
       }
       case sbe::OrderRested::sbeTemplateId(): {
         sbe::OrderRested event;
         event.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
                             length);
-        const long at = find(event.orderId());
-        if (at >= 0) {
-          Watched& order = orders_[static_cast<std::size_t>(at)];
-          order.rested = true;
-          order.side = static_cast<std::uint8_t>(event.side() == sbe::Side::BUY ? 0 : 1);
-          order.price = event.price();
-          order.remaining = event.quantity();
-        }
+        owners_.onRested(event.orderId(),
+                         static_cast<std::uint8_t>(event.side() == sbe::Side::BUY ? 0 : 1),
+                         event.price(), event.quantity());
         break;
       }
       case sbe::OrderReduced::sbeTemplateId(): {
         sbe::OrderReduced event;
         event.wrapForDecode(message, wrap.encodedLength(), wrap.blockLength(), wrap.version(),
                             length);
-        const long at = find(event.orderId());
-        if (at >= 0) {
-          orders_[static_cast<std::size_t>(at)].remaining = event.quantity();
-        }
+        owners_.onReduced(event.orderId(), event.quantity());
         break;
       }
       case sbe::OrderExecuted::sbeTemplateId(): {
@@ -130,16 +104,6 @@ class Surveillance {
   std::uint64_t layerings() const { return layerings_; }
 
  private:
-  struct Watched {
-    std::uint64_t orderId = 0;
-    std::uint32_t participant = 0;
-    std::uint32_t instrument = 0;
-    std::int64_t remaining = 0;
-    std::int64_t price = 0;
-    std::uint8_t side = 2;
-    bool rested = false;
-  };
-
   // One participant's recent story on one clock: fills and cancels as fixed rings.
   struct Fill {
     std::uint64_t at = 0;
@@ -166,12 +130,10 @@ class Surveillance {
     const std::uint64_t when = event.context().timestamp();
     const std::uint64_t sequence = event.context().sequence();
     const std::uint32_t instrument = event.context().instrumentId();
-    const long aggressorAt = find(event.aggressorOrderId());
-    const long restingAt = find(event.restingOrderId());
-    const std::uint32_t aggressor =
-        aggressorAt < 0 ? NOBODY : orders_[static_cast<std::size_t>(aggressorAt)].participant;
-    const std::uint32_t resting =
-        restingAt < 0 ? NOBODY : orders_[static_cast<std::size_t>(restingAt)].participant;
+    const long aggressorAt = owners_.find(event.aggressorOrderId());
+    const long restingAt = owners_.find(event.restingOrderId());
+    const std::uint32_t aggressor = aggressorAt < 0 ? NOBODY : owners_.at(aggressorAt).participant;
+    const std::uint32_t resting = restingAt < 0 ? NOBODY : owners_.at(restingAt).participant;
 
     // The simplest self-dealing, caught exactly: both sides of one print, one participant.
     if (aggressor != NOBODY && aggressor == resting &&
@@ -184,15 +146,12 @@ class Surveillance {
     // Each owner's fill enters its history: the resting owner filled at the resting order's
     // side, the aggressor at the opposite of it.
     if (restingAt >= 0) {
-      Watched& order = orders_[static_cast<std::size_t>(restingAt)];
-      recordFill(resting, when, instrument, order.side, event.quantity());
+      const std::uint8_t restingSide = owners_.at(restingAt).side;
+      recordFill(resting, when, instrument, restingSide, event.quantity());
       evaluate(resting, instrument, sequence, when);
-      order.remaining -= event.quantity();
-      if (order.rested && order.remaining <= 0) {
-        erase(static_cast<std::size_t>(restingAt));
-      }
+      owners_.onExecuted(event.restingOrderId(), event.quantity());
       if (aggressor != NOBODY && aggressor != resting) {
-        recordFill(aggressor, when, instrument, static_cast<std::uint8_t>(1 - order.side),
+        recordFill(aggressor, when, instrument, static_cast<std::uint8_t>(1 - restingSide),
                    event.quantity());
         evaluate(aggressor, instrument, sequence, when);
       }
@@ -200,11 +159,11 @@ class Surveillance {
   }
 
   void onRemoval(sbe::OrderRemoved& event) {
-    const long at = find(event.orderId());
+    const long at = owners_.find(event.orderId());
     if (at < 0) {
       return;
     }
-    const Watched order = orders_[static_cast<std::size_t>(at)];
+    const common::OwnedOrder order = owners_.at(at);
     if (event.reason() == sbe::RemoveReason::CANCELLED ||
         event.reason() == sbe::RemoveReason::MASS_CANCELLED) {
       // A cancellation of resting interest is half the pattern; record it and re-judge.
@@ -218,9 +177,7 @@ class Surveillance {
       evaluate(order.participant, order.instrument, event.context().sequence(),
                event.context().timestamp());
     }
-    if (event.reason() != sbe::RemoveReason::REPLACED) {
-      erase(static_cast<std::size_t>(at));
-    }
+    owners_.onRemoved(event.orderId(), event.reason() == sbe::RemoveReason::REPLACED);
   }
 
   void recordFill(const std::uint32_t participant, const std::uint64_t when,
@@ -321,76 +278,13 @@ class Surveillance {
     return histories_.back();
   }
 
-  // The fixed table: linear probing on the order id, backward-shift deletion.
-  static std::size_t hashOf(const std::uint64_t key) {
-    std::uint64_t mixed = key * 0x9E3779B97F4A7C15ULL;
-    mixed ^= mixed >> 32;
-    return static_cast<std::size_t>(mixed) & (ORDERS - 1);
-  }
-
-  Watched& slotFor(const std::uint64_t key) {
-    std::size_t at = hashOf(key);
-    while (keys_[at] != 0 && keys_[at] != key) {
-      at = (at + 1) & (ORDERS - 1);
-    }
-    keys_[at] = key;
-    return orders_[at];
-  }
-
-  long find(const std::uint64_t key) const {
-    std::size_t at = hashOf(key);
-    while (keys_[at] != 0) {
-      if (keys_[at] == key) {
-        return static_cast<long>(at);
-      }
-      at = (at + 1) & (ORDERS - 1);
-    }
-    return -1;
-  }
-
-  void erase(std::size_t at) {
-    keys_[at] = 0;
-    std::size_t hole = at;
-    std::size_t probe = (at + 1) & (ORDERS - 1);
-    while (keys_[probe] != 0) {
-      const std::size_t wants = hashOf(keys_[probe]);
-      const bool movable = ((probe - wants) & (ORDERS - 1)) >= ((probe - hole) & (ORDERS - 1));
-      if (movable) {
-        keys_[hole] = keys_[probe];
-        orders_[hole] = orders_[probe];
-        keys_[probe] = 0;
-        hole = probe;
-      }
-      probe = (probe + 1) & (ORDERS - 1);
-    }
-  }
-
-  // Unrested entries are aggressors that filled whole and will never be spoken of again; they
-  // age out by orderId distance, deterministically, because the numbering is the engine's own.
-  void sweep() {
-    if (newestOrderId_ <= AGE_HORIZON) {
-      return;
-    }
-    const std::uint64_t oldest = newestOrderId_ - AGE_HORIZON;
-    for (std::size_t at = 0; at < ORDERS; at++) {
-      if (keys_[at] != 0 && !orders_[at].rested && orders_[at].orderId < oldest) {
-        erase(at);
-        // The shift may have pulled an entry into this slot; judge it too.
-        at--;
-      }
-    }
-  }
-
   static constexpr std::uint32_t NOBODY = 0xFFFFFFFF;
 
   Sink& sink_;
   Config config_;
-  std::vector<std::uint64_t> keys_;
-  std::vector<Watched> orders_;
+  common::Ownership owners_;
   std::vector<std::uint32_t> participants_;
   std::vector<History> histories_;
-  std::uint64_t newestOrderId_ = 0;
-  std::uint64_t accepted_ = 0;
   std::uint64_t alertId_ = 0;
   std::uint64_t washTrades_ = 0;
   std::uint64_t spoofs_ = 0;
